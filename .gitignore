@@ -7,3 +7,9 @@ coverage/
 .env.*
 !.env.example
 *.tsbuildinfo
+
+# Benchmark artifacts — fetched datasets, exported model weights, and run output are large
+# and reproducible (pnpm bench:fetch / pnpm bench); don't commit them.
+bench/data/
+bench/models/
+bench/report.json

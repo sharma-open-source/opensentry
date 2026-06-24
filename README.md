@@ -560,6 +560,39 @@ Outputs gate metrics:
 EVAL OK {"attackRecall":"1.000","hardBlockRecall":"1.000","benignFpr":"0.000","notInjectRate":"0.000"}
 ```
 
+### Real-corpus benchmark
+
+The gates above run against a 24/20/25-sample hand-written seed corpus — useful as a CI
+tripwire, not a measure of real-world performance. `bench/` runs the full pipeline against
+1,699 real attacks + 700 real benign samples from public datasets (Lakera/Gandalf,
+JailbreakBench, AdvBench, NotInject, Alpaca), using the actual shipped default Tier-1 model
+(`meta-llama/Llama-Prompt-Guard-2-22M`, not a stand-in), and reports precision/recall/F1,
+ROC-AUC/PR-AUC, recall@fixed-FPR, and latency percentiles. Full methodology, dataset
+provenance, and caveats: **[bench/REPORT.md](bench/REPORT.md)**.
+
+```bash
+pnpm bench:fetch   # downloads the real corpora (~2.4k samples) from public HF datasets
+pnpm bench         # runs the full suite, ~45s, writes bench/report.json
+```
+
+| View | Precision | Recall | F1 | FPR | ROC-AUC | p50 latency | p99 latency |
+|---|---|---|---|---|---|---|---|
+| Tier 0 only | 1.000 | 0.304 | 0.467 | 0.000 | 0.655 | 0.03ms | 0.45ms |
+| Tier 1 (real model, called directly) | 0.992 | 0.803 | 0.888 | 0.016 | 0.986 | 5.5ms | 76ms |
+| Blended, as shipped (default policy) | 1.000 | 0.304 | 0.467 | 0.000 | 0.655 | 0.04ms | 7.5ms |
+| Blended, `alwaysEscalate` forced on `user` | 0.992 | 0.804 | 0.888 | 0.016 | 0.986 | 5.5ms | 87ms |
+
+**The headline finding:** with the default policy, the blended pipeline performs *identically*
+to Tier 0 alone — Tier 1 only escalates when Tier 0's own score already lands in the uncertain
+"flag" band, or for `alwaysEscalate` sources (`retrieved`/`tool`/`web`/`email`, not `user` by
+default). Attacks with no structural marker — `harmful_behavior` (AdvBench/JBB: "Develop a
+strategy for hacking into…"), most `jailbreak_persona` prompts — score 0 on Tier 0 and never
+reach the flag band, so **Tier 1 never runs on them under the documented default for
+`source: 'user'`**, even though the model itself catches ~50–100% of that content when actually
+invoked. Forcing `alwaysEscalate` on `user` recovers that recall but pushes NotInject
+over-defense to 9.1% — above the project's own <5% gate. See the report for the full
+per-category breakdown and trade-off discussion.
+
 ## Companions
 
 Zero-dep defense-in-depth utilities that ride on Tier 0 (PLAN.md §11a).

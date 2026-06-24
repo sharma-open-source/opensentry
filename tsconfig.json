@@ -25,6 +25,6 @@
       "opensentry/wasm": ["./src/wasm/index.ts"]
     }
   },
-  "include": ["src", "corpus", "tests", "tsup.config.ts", "vitest.config.ts", "vitest.perf.config.ts", "vitest.eval.config.ts"],
+  "include": ["src", "corpus", "tests", "bench", "tsup.config.ts", "vitest.config.ts", "vitest.perf.config.ts", "vitest.eval.config.ts", "vitest.bench.config.ts"],
   "exclude": ["dist", "node_modules"]
 }

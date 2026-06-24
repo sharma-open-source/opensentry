@@ -68,6 +68,8 @@
     "test:watch": "vitest",
     "test:perf": "vitest run -c vitest.perf.config.ts",
     "eval": "vitest run -c vitest.eval.config.ts",
+    "bench:fetch": "node bench/fetch.mjs",
+    "bench": "vitest run -c vitest.bench.config.ts",
     "ci": "biome check src && tsc --noEmit && vitest run && vitest run -c vitest.perf.config.ts && vitest run -c vitest.eval.config.ts"
   },
   "keywords": [
@@ -81,6 +83,7 @@
   ],
   "devDependencies": {
     "@biomejs/biome": "^2.5.1",
+    "@huggingface/transformers": "^4.2.0",
     "@types/node": "^26.0.0",
     "tsup": "^8.5.1",
     "typescript": "^6.0.3",
@@ -104,7 +107,10 @@
   },
   "pnpm": {
     "onlyBuiltDependencies": [
-      "esbuild"
+      "esbuild",
+      "onnxruntime-node",
+      "protobufjs",
+      "sharp"
     ]
   }
 }
