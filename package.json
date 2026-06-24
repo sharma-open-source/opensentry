@@ -1,0 +1,58 @@
+{
+  "name": "opensentry",
+  "version": "0.1.0",
+  "description": "Tiered prompt-injection validation layer. Zero-dep sub-ms Tier 0 core (Node + edge identical), optional local ML + remote guard tiers.",
+  "type": "module",
+  "license": "MIT",
+  "sideEffects": false,
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./confusables": {
+      "types": "./dist/confusables/index.d.ts",
+      "import": "./dist/confusables/index.js"
+    }
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc --noEmit",
+    "lint": "biome check src",
+    "format": "biome format --write src",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:perf": "vitest run -c vitest.perf.config.ts",
+    "eval": "vitest run -c vitest.eval.config.ts",
+    "ci": "biome check src && tsc --noEmit && vitest run && vitest run -c vitest.perf.config.ts && vitest run -c vitest.eval.config.ts"
+  },
+  "keywords": [
+    "prompt-injection",
+    "llm-security",
+    "guardrail",
+    "ai-safety",
+    "owasp-llm01",
+    "unicode-normalization",
+    "edge"
+  ],
+  "devDependencies": {
+    "@biomejs/biome": "^2.5.1",
+    "@types/node": "^26.0.0",
+    "tsup": "^8.5.1",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.9"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild"
+    ]
+  }
+}

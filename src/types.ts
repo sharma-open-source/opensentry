@@ -1,0 +1,206 @@
+// Public type surface of opensentry — locked per PLAN.md §6.
+// Pure types only; no runtime here so it is side-effect free and tree-shakeable.
+
+export type Verdict = 'allow' | 'flag' | 'block';
+export type Tier = 0 | 1 | 2; // 0=sync heuristics, 1=local ML, 2=remote
+export type Source = 'system' | 'user' | 'retrieved' | 'tool' | 'web' | 'email';
+export type Mode = 'shadow' | 'soft' | 'enforce';
+
+export type ReasonCode =
+  | 'unicode_tag_smuggling'
+  | 'bidi_override'
+  | 'invisible_density'
+  | 'zero_width_chars'
+  | 'confusable_run'
+  | 'script_mixing'
+  | 'encoded_payload'
+  | 'entropy_anomaly'
+  | 'role_tag_spoof'
+  | 'template_forgery'
+  | 'instruction_override'
+  | 'policy_puppetry'
+  | 'exfil_markdown_image'
+  | 'refusal_suppression'
+  | 'agentic_tool_hijack'
+  | 'indirect_marker'
+  | 'length_cap'
+  | 'lang_divergence'
+  | 'ml_classifier'
+  | 'remote_guard'
+  | 'embedding_match'
+  | 'degraded_mode';
+
+export type ReasonCategory = 'obfuscation' | 'structural' | 'semantic' | 'exfil' | 'resource';
+
+export interface Reason {
+  code: ReasonCode;
+  category: ReasonCategory;
+  weight: number; // contribution to score [0..1]
+  span?: [start: number, end: number]; // offsets into the matching (normalized) copy
+  message: string; // human-readable, for appeals/debug
+  hardBlock?: boolean; // deterministic hard rule (blocks even in fail-open)
+}
+
+export interface GuardResult {
+  verdict: Verdict; // ENFORCED decision (respects shadow/soft mode)
+  wouldVerdict: Verdict; // decision BEFORE shadow override — for shadow-mode logging
+  score: number; // 0..1 aggregated weighted evidence (max-aggregate)
+  reasons: Reason[];
+  sanitized: string; // MODEL copy: normalized, invisible-stripped — pass THIS downstream
+  normalized: string; // MATCHING copy (folded/casefolded) — audit/debug
+  truncated: boolean;
+  tier: Tier; // highest tier that actually executed
+  source: Source;
+  shadow: boolean; // true => verdict was NOT enforced
+  degraded?: { tier: Tier; reason: ReasonCode }; // a tier failed open — surfaced, never silent
+  latencyMs: number;
+}
+
+export interface GuardContext {
+  source?: Source; // default 'user'; drives per-source policy + thresholds
+  locale?: string; // enables RTL-aware bidi + locale-aware script/lang gates
+  highRiskAction?: boolean; // forces escalation + fail-closed (pre-tool-call gating)
+  conversationId?: string; // multi-turn / cache keying
+  requestId?: string;
+}
+
+export interface Thresholds {
+  flag: number;
+  block: number;
+} // default { flag: 0.4, block: 0.85 }
+
+// Tier 2 is BYO-provider. Aegis ships this interface + thin reference adapters; YOU decide
+// if/when to enable it. Nothing is sent off-box unless you pass a provider here.
+export interface RemoteGuardProvider {
+  name: string;
+  scan(
+    text: string,
+    ctx: GuardContext,
+  ): Promise<{
+    score: number; // 0..1 malicious probability, folded into the score
+    label?: 'benign' | 'injection' | 'jailbreak' | (string & {});
+    categories?: string[]; // optional policy-category labels
+    raw?: unknown; // provider's raw payload, for logging
+  }>;
+}
+
+export interface HeuristicsDetector {
+  kind: 'heuristics';
+} // Tier 0, sync, always edge-safe
+
+export interface LocalModelDetector {
+  kind: 'localModel';
+  model?: 'llama-prompt-guard-2-22m' | 'llama-prompt-guard-2-86m';
+  runtime?: 'node' | 'wasm';
+  quantized?: boolean;
+  warmOnBoot?: boolean;
+  timeoutMs?: number;
+}
+
+export interface RemoteGuardDetector {
+  kind: 'remoteGuard';
+  provider: RemoteGuardProvider;
+  timeoutMs?: number; // default 500
+  circuitBreaker?: boolean;
+  failMode?: 'open' | 'closed';
+}
+
+export interface EmbeddingCorpusDetector {
+  kind: 'embeddingCorpus';
+  embed: (s: string) => Promise<number[]>;
+  topK?: number;
+}
+
+export type Detector =
+  | HeuristicsDetector
+  | LocalModelDetector
+  | RemoteGuardDetector
+  | EmbeddingCorpusDetector;
+
+export interface GuardMetric {
+  requestId?: string;
+  conversationId?: string;
+  source: Source;
+  tier: Tier; // highest tier that actually executed
+  latencyMs: number;
+  verdict: Verdict;
+  wouldVerdict: Verdict;
+  score: number;
+  escalated: boolean; // a higher tier was invoked
+  cached: boolean;
+  truncated: boolean;
+  degraded?: { tier: Tier; reason: ReasonCode };
+  reasons: ReasonCode[];
+}
+
+export interface PerSourcePolicy {
+  thresholds?: Partial<Thresholds>;
+  alwaysEscalate?: boolean; // retrieved/tool/web/email default true
+  skip?: boolean; // system default true (never scored as attack)
+  failMode?: 'open' | 'closed';
+}
+
+export interface GuardConfig {
+  mode?: Mode; // default 'enforce'; 'shadow' computes but never blocks
+  thresholds?: Partial<Thresholds>; // ship low-FP profiles, never a naive 0.5
+  policy?: {
+    failMode?: 'open' | 'closed'; // default 'open'
+    hardBlockRules?: ReasonCode[] | true; // fire even when failMode==='open'; default the det. set
+    perSource?: Partial<Record<Source, PerSourcePolicy>>;
+  };
+  normalize?: {
+    nfkc?: boolean;
+    stripInvisible?: boolean;
+    foldConfusables?: boolean; // matching copy only
+    handleBidi?: 'strip' | 'isolate' | 'off';
+    decodeEncoded?: boolean;
+    decodeDepth?: number; // default 2
+    maxScanBytes?: number; // default 65536, truncate-with-flag
+    rtlLocales?: string[];
+  };
+  // Detectors are pluggable + lazily loaded from subpath exports.
+  detectors?: Detector[]; // default [{ kind: 'heuristics' }]
+  cache?: {
+    max?: number;
+  }; // LRU of verdicts by hash(normalized + source)
+  onMetric?: (m: GuardMetric) => void; // per-tier latency, escalation rate, tier-agreement…
+}
+
+export interface WrapOptions<A extends unknown[], R = unknown> {
+  inputSelector?: (...a: A) => { text: string; ctx?: GuardContext };
+  onFlag?: (r: GuardResult, ...a: A) => void;
+  onBlock?: (r: GuardResult, ...a: A) => R | Promise<R>;
+  replaceWithSanitized?: boolean; // default true
+}
+
+export interface Guard {
+  // Tier-0 ONLY, sync, edge-safe, no I/O. THROWS if any configured detector is async.
+  checkSync(input: string, ctx?: GuardContext): GuardResult;
+
+  // Full tiered pipeline (Tier 0 -> conditional Tier 1 -> conditional Tier 2), lazy-loads ML/remote.
+  check(input: string, ctx?: GuardContext): Promise<GuardResult>;
+
+  // Chat arrays: scores each message per its source role; skips the trusted system prompt.
+  checkMessages(messages: { role: Source; content: string }[]): Promise<GuardResult[]>;
+
+  // Streaming model-output / chunked tool content. Buffers across chunk boundaries so split
+  // injection tokens are caught; supports early-abort.
+  createStreamScanner(ctx?: GuardContext): {
+    push(chunk: string): { partial: Verdict; abort: boolean };
+    end(): GuardResult;
+  };
+
+  // Drop-in wrapper, quality-preserving by default: flag => passthrough sanitized (+log),
+  // block => onBlock (throw GuardBlockError). Passes SANITIZED text downstream.
+  wrap<A extends unknown[], R>(
+    fn: (...a: A) => Promise<R>,
+    opts?: WrapOptions<A, R>,
+  ): (...a: A) => Promise<R>;
+
+  // Tool-call guard (least-privilege assist): scan args through the pipeline + enforce an
+  // allowlist of tools/arg-shapes BEFORE execution. (Phase 4)
+  checkToolCall(
+    call: { name: string; args: unknown },
+    policy: { allow: Record<string, unknown> },
+  ): Promise<GuardResult>;
+}

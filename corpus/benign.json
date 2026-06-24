@@ -1,0 +1,26 @@
+{
+  "name": "opensentry-seed-benign",
+  "version": 1,
+  "entries": [
+    { "id": "ben-001", "label": "benign", "text": "What's the weather in Paris today?" },
+    { "id": "ben-002", "label": "benign", "text": "Please translate this paragraph to French." },
+    { "id": "ben-003", "label": "benign", "text": "Summarize the following article in three bullet points." },
+    { "id": "ben-004", "label": "benign", "text": "Write a Python function that sorts a list of tuples by the second element." },
+    { "id": "ben-005", "label": "benign", "text": "Tell me a short joke about robots." },
+    { "id": "ben-006", "label": "benign", "locale": "de", "text": "Übersetze diesen Text ins Englische." },
+    { "id": "ben-007", "label": "benign", "locale": "zh", "text": "你好，请帮我写一首关于秋天的短诗。" },
+    { "id": "ben-008", "label": "benign", "locale": "ar", "text": "مرحبا، كيف حالك اليوم؟" },
+    { "id": "ben-009", "label": "benign", "text": "🎉🎉 Great job on the release! 🎉" },
+    { "id": "ben-010", "label": "benign", "text": "What are your thoughts on the new design system?" },
+    { "id": "ben-011", "label": "benign", "text": "How do I configure the system cron job on Linux?" },
+    { "id": "ben-012", "label": "benign", "text": "The system is down for scheduled maintenance until 5pm." },
+    { "id": "ben-013", "label": "benign", "text": "Here is a base64 image thumbnail: data:image/png;base64,iVBORw0KGgoAAAANSUhEUg==" },
+    { "id": "ben-014", "label": "benign", "text": "Execute the following code to compute the factorial of n." },
+    { "id": "ben-015", "label": "benign", "text": "Call the function with arguments (1, 2, 3) and return the result." },
+    { "id": "ben-016", "label": "benign", "text": "Just answer the question directly, no need for extra detail." },
+    { "id": "ben-017", "label": "benign", "text": "Repeat after me: practice makes perfect." },
+    { "id": "ben-018", "label": "benign", "text": "Repeat the question slowly so I can take notes." },
+    { "id": "ben-019", "label": "benign", "text": "Show me your portfolio site when you have a chance." },
+    { "id": "ben-020", "label": "benign", "text": "Reveal your answer to the riddle when I'm ready." }
+  ]
+}
