@@ -4,6 +4,12 @@ export default defineConfig({
   entry: {
     index: 'src/index.ts',
     'confusables/index': 'src/confusables/index.ts',
+    'spotlight/index': 'src/spotlight/index.ts',
+    'egress/index': 'src/egress/index.ts',
+    'prompt/index': 'src/prompt/index.ts',
+    'express/index': 'src/middleware/express.ts',
+    'hono/index': 'src/middleware/hono.ts',
+    'next/index': 'src/middleware/next.ts',
   },
   format: ['esm'],
   dts: true,

@@ -155,10 +155,17 @@ describe('checkSync / check tier guards', () => {
     await expect(g.check('hi')).rejects.toThrow(/remoteGuard/);
   });
 
-  test('checkMessages / createStreamScanner / checkToolCall are phased stubs', async () => {
+  test('checkMessages / createStreamScanner are implemented (Phase 2)', async () => {
     const g = createGuard();
-    await expect(g.checkMessages([])).rejects.toThrow();
-    expect(() => g.createStreamScanner()).toThrow();
+    const results = await g.checkMessages([]);
+    expect(results).toEqual([]);
+    const scanner = g.createStreamScanner();
+    expect(typeof scanner.push).toBe('function');
+    expect(typeof scanner.end).toBe('function');
+  });
+
+  test('checkToolCall is still a Phase 4 stub', async () => {
+    const g = createGuard();
     await expect(g.checkToolCall({ name: 'x', args: {} }, { allow: {} })).rejects.toThrow();
   });
 });

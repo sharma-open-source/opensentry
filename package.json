@@ -16,6 +16,30 @@
     "./confusables": {
       "types": "./dist/confusables/index.d.ts",
       "import": "./dist/confusables/index.js"
+    },
+    "./spotlight": {
+      "types": "./dist/spotlight/index.d.ts",
+      "import": "./dist/spotlight/index.js"
+    },
+    "./egress": {
+      "types": "./dist/egress/index.d.ts",
+      "import": "./dist/egress/index.js"
+    },
+    "./prompt": {
+      "types": "./dist/prompt/index.d.ts",
+      "import": "./dist/prompt/index.js"
+    },
+    "./express": {
+      "types": "./dist/express/index.d.ts",
+      "import": "./dist/express/index.js"
+    },
+    "./hono": {
+      "types": "./dist/hono/index.d.ts",
+      "import": "./dist/hono/index.js"
+    },
+    "./next": {
+      "types": "./dist/next/index.d.ts",
+      "import": "./dist/next/index.js"
     }
   },
   "main": "./dist/index.js",

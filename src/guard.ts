@@ -13,6 +13,7 @@ import type {
   GuardResult,
   Reason,
   Source,
+  Verdict,
   WrapOptions,
 } from './types.js';
 
@@ -216,16 +217,34 @@ export function createGuard(config?: GuardConfig): Guard {
       return checkSyncInternal(input, ctx);
     },
 
-    async checkMessages() {
-      throw new Error(
-        'opensentry: checkMessages is planned for Phase 2 (per-message scoring with conversationId).',
-      );
+    async checkMessages(messages: { role: Source; content: string }[]): Promise<GuardResult[]> {
+      // PLAN.md §6: scores each message per its source role; skips the trusted system
+      // prompt (handled by the per-source skip policy → verdict 'allow'). Uses guard.check
+      // so future async tiers (Phase 3/4) are automatically engaged per message.
+      return Promise.all(messages.map((msg) => guard.check(msg.content, { source: msg.role })));
     },
 
-    createStreamScanner() {
-      throw new Error(
-        'opensentry: createStreamScanner is planned for Phase 2 (streaming/chunked scan).',
-      );
+    createStreamScanner(ctx?: GuardContext) {
+      // PLAN.md §6: streaming model-output / chunked tool content. Buffers across chunk
+      // boundaries so split injection tokens are caught (e.g. "<|im_st" + "art|>").
+      // Supports early-abort: abort=true when the enforced verdict reaches 'block'.
+      // Uses runTier0 (no cache) for incremental pushes to avoid polluting the LRU with
+      // partial buffers; end() runs the full pipeline with cache + metrics.
+      let buffer = '';
+      let worst: Verdict = 'allow';
+      const rank = (v: Verdict): number => (v === 'block' ? 2 : v === 'flag' ? 1 : 0);
+
+      return {
+        push(chunk: string): { partial: Verdict; abort: boolean } {
+          buffer += chunk;
+          const r = runTier0(buffer, ctx);
+          if (rank(r.verdict) > rank(worst)) worst = r.verdict;
+          return { partial: worst, abort: worst === 'block' };
+        },
+        end(): GuardResult {
+          return checkSyncInternal(buffer, ctx);
+        },
+      };
     },
 
     wrap<A extends unknown[], R>(fn: (...a: A) => Promise<R>, opts?: WrapOptions<A, R>) {
