@@ -91,7 +91,7 @@ const result = guard.checkSync(userInput, {
 
 ### `guard.check(input, ctx?): Promise<GuardResult>`
 
-Full tiered pipeline. Tier 0 runs first; if a `localModel` detector is configured, Tier 1 (local ML) is invoked conditionally — on the uncertain flag-band, on `alwaysEscalate` sources (retrieved/tool/web/email), or when `highRiskAction` is set. The ML score is folded into the aggregate via noisy-OR; the verdict is re-decided with all evidence. Tier 2 (remote guard) is planned for Phase 4.
+Full tiered pipeline: Tier 0 → conditional Tier 1 (local ML) → conditional Tier 2 (remote guard). If a `localModel` detector is configured, Tier 1 is invoked on the uncertain flag-band, on `alwaysEscalate` sources (retrieved/tool/web/email), or when `highRiskAction` is set. If a `remoteGuard` detector is configured, Tier 2 is invoked only when still borderline after Tier 1 (or after Tier 0 if no Tier 1 is configured) or when `highRiskAction` is set — never on the common path. Each tier's score is folded into the aggregate via noisy-OR; the verdict is re-decided with all evidence at every step.
 
 ```ts
 const guard = createGuard({
@@ -104,7 +104,8 @@ const guard = createGuard({
 const result = await guard.check(userInput, { source: 'user' });
 // result.tier === 0  → Tier 0 only (clean or hard-block)
 // result.tier === 1  → Tier 1 ML was invoked and its score folded in
-// result.degraded    → { tier: 1, reason: 'degraded_mode' } if ML failed (circuit breaker / timeout)
+// result.tier === 2  → Tier 2 remote guard was invoked and its score folded in
+// result.degraded    → { tier, reason: 'degraded_mode' } if that tier failed (circuit breaker / timeout)
 ```
 
 ### `guard.checkMessages(messages): Promise<GuardResult[]>`
@@ -149,6 +150,21 @@ const answer = await safeComplete(userPrompt);
 ```
 
 On `block`, throws `GuardBlockError` (or calls `onBlock`). On `flag`, calls `onFlag` and passes sanitized text through.
+
+### `guard.checkToolCall(call, policy): Promise<GuardResult>`
+
+Least-privilege assist for agentic tool calls — scans the call's args through the full pipeline and enforces a name allowlist **before execution**. `highRiskAction` is forced, so the uncertain band fails closed.
+
+```ts
+const result = await guard.checkToolCall(
+  { name: 'sendEmail', args: { to: 'user@example.com', body: emailBody } },
+  { allow: { sendEmail: {}, readFile: {} } },
+);
+if (result.verdict === 'block') return refuse(result.reasons);
+// proceed with the tool call
+```
+
+A tool name outside `policy.allow` always blocks (`agentic_tool_hijack`); a name inside the allowlist still has its `args` scanned for injection. The privilege model itself (what a tool is actually allowed to do) stays in your runtime — this only gates against running an injected/disallowed call.
 
 ### `GuardResult`
 
@@ -199,8 +215,9 @@ Input
   │ (optional escalation)
   ▼
 ┌──────────────────────────────────────────────────┐
-│ Tier 2 — remote guard (planned)                  │
-│  BYO provider, circuit breaker, fail-open/closed  │
+│ Tier 2 — remote guard / LLM-as-judge (optional)   │
+│  BYO RemoteGuardProvider, spotlight-delimited     │
+│  content, circuit breaker, fail-open/closed       │
 └──────────────────────────────────────────────────┘
 ```
 
@@ -311,6 +328,87 @@ const guard = createGuard({
   ],
 });
 ```
+
+## Tier 2 — remote guard / LLM-as-judge
+
+Tier 2 escalates to an external guard model or LLM-as-judge for the highest semantic ceiling — reserved for content still borderline after Tier 1 (or after Tier 0 if no Tier 1 is configured), or for gating a `highRiskAction` (pre-tool-call / pre-egress). **Never synchronous on the common path.** Aegis/opensentry ships **no vendor SDKs** in core — you supply a `RemoteGuardProvider` (and therefore decide if/when anything leaves the process).
+
+```ts
+import { createGuard } from 'opensentry';
+import type { RemoteGuardProvider } from 'opensentry';
+
+const provider: RemoteGuardProvider = {
+  name: 'my-guard-service',
+  async scan(text, ctx) {
+    const res = await fetch('https://my-guard.internal/scan', {
+      method: 'POST',
+      body: JSON.stringify({ text }),
+    });
+    const json = await res.json();
+    return { score: json.maliciousProbability, label: json.label };
+  },
+};
+
+const guard = createGuard({
+  detectors: [
+    { kind: 'heuristics' },
+    { kind: 'localModel', runtime: 'wasm' },
+    { kind: 'remoteGuard', provider, timeoutMs: 500, circuitBreaker: true },
+  ],
+});
+
+const result = await guard.check(userInput, { source: 'user' });
+// result.tier === 2 when the remote guard was invoked and its score folded in
+```
+
+### Reference adapters — `opensentry/remote`
+
+Thin, optional adapters for common provider shapes (no vendor SDKs bundled):
+
+```ts
+import { createHttpGuardProvider, createLlamaGuardChatProvider } from 'opensentry/remote';
+
+// Generic JSON guard endpoint (Azure Prompt Shields, Lakera, Bedrock Guardrails, in-house classifiers)
+const httpProvider = createHttpGuardProvider({
+  name: 'lakera',
+  url: 'https://api.lakera.ai/v2/guard',
+  headers: { authorization: `Bearer ${process.env.LAKERA_API_KEY}` },
+  parseResponse: (json) => ({ score: json.flagged ? 1 : 0, label: json.flagged ? 'injection' : 'benign' }),
+});
+
+// OpenAI-chat-compatible endpoint hosting a guard model (Llama-Guard / Prompt-Guard-2 on Groq/Together)
+const judgeProvider = createLlamaGuardChatProvider({
+  url: 'https://api.groq.com/openai/v1/chat/completions',
+  apiKey: process.env.GROQ_API_KEY,
+  model: 'meta-llama/llama-guard-4-12b',
+});
+```
+
+`createLlamaGuardChatProvider` spotlight-delimits the untrusted text before embedding it in the judge prompt — the judge's own output is itself an LLM call (injectable, nondeterministic), so it stays one weighted signal in the score, never an unconditional block.
+
+### How it works
+
+1. **Escalation gate** — fires only when `wouldVerdict === 'flag'` after Tier 0/1, or `highRiskAction: true`
+2. **Spotlight-delimit** — `current.sanitized` is wrapped in a random delimiter before being handed to the provider
+3. **Score folding** — provider score → `Reason(code='remote_guard', category='semantic')` → re-aggregated via noisy-OR with all prior reasons → verdict re-decided
+4. **Circuit breaker** — same shape as Tier 1: opens after 5 consecutive failures, half-open probe after 30s cooldown (`circuitBreaker: false` to disable per-detector)
+5. **Timeout** — default 500ms; on timeout, falls back to the prior-tier verdict + `degraded` flag
+6. **Degraded fallback** — on failure, returns the prior verdict with `degraded: { tier: 2, reason: 'degraded_mode' }`. `failMode: 'closed'` (detector-level, falls back to per-source policy) escalates flag → block
+
+### Embedding-corpus ensemble (optional)
+
+An additional, independent semantic signal: embed the input and compare it via cosine similarity against a reference corpus of canonical attack phrases (or your own). BYO `embed` — opensentry bundles no embedding model.
+
+```ts
+const guard = createGuard({
+  detectors: [
+    { kind: 'heuristics' },
+    { kind: 'embeddingCorpus', embed: myEmbedFn, topK: 5 }, // corpus?: string[] to override the default
+  ],
+});
+```
+
+Same shape as the other escalation tiers: fires only when still borderline (or `alwaysEscalate` / `highRiskAction`), folds its top-K average similarity in as a `Reason(code='embedding_match', category='semantic')` via noisy-OR, has its own circuit breaker + timeout (default 2000ms) + degraded fallback (`degraded: { tier: 2, ... }`). Reported as `tier: 2`. When chained with Tier 1/Tier 2, it runs between them — only after ML still leaves the verdict borderline, and before the remote guard is invoked.
 
 ## Edge safety
 
@@ -580,6 +678,7 @@ export async function POST(req: Request) {
 | `opensentry/next` | Next.js App Router middleware |
 | `opensentry/onnx` | Tier 1 ML — Node runtime (onnxruntime-node) |
 | `opensentry/wasm` | Tier 1 ML — edge runtime (onnxruntime-web) |
+| `opensentry/remote` | Tier 2 reference adapters (BYO `RemoteGuardProvider`, no vendor SDKs) |
 
 ## License
 

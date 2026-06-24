@@ -126,6 +126,8 @@ export interface EmbeddingCorpusDetector {
   kind: 'embeddingCorpus';
   embed: (s: string) => Promise<number[]>;
   topK?: number;
+  timeoutMs?: number; // default 2000
+  corpus?: string[]; // override the bundled reference attack corpus
 }
 
 export type Detector =

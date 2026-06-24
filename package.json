@@ -48,6 +48,10 @@
     "./wasm": {
       "types": "./dist/wasm/index.d.ts",
       "import": "./dist/wasm/index.js"
+    },
+    "./remote": {
+      "types": "./dist/remote/index.d.ts",
+      "import": "./dist/remote/index.js"
     }
   },
   "main": "./dist/index.js",

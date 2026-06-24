@@ -160,11 +160,13 @@ describe('checkSync / check tier guards', () => {
     expect(typeof r.verdict).toBe('string');
   });
 
-  test('check throws for remoteGuard (Phase 4)', async () => {
+  test('check with remoteGuard + mock provider works (Phase 4)', async () => {
     const g = createGuard({
       detectors: [{ kind: 'remoteGuard', provider: { name: 'x', scan: async () => ({ score: 0 }) } }],
     });
-    await expect(g.check('hi')).rejects.toThrow(/remoteGuard/);
+    const r = await g.check('hi');
+    expect(r.tier).toBeGreaterThanOrEqual(0);
+    expect(typeof r.verdict).toBe('string');
   });
 
   test('checkMessages / createStreamScanner are implemented (Phase 2)', async () => {
@@ -176,8 +178,9 @@ describe('checkSync / check tier guards', () => {
     expect(typeof scanner.end).toBe('function');
   });
 
-  test('checkToolCall is still a Phase 4 stub', async () => {
+  test('checkToolCall blocks tools outside the allowlist (Phase 4)', async () => {
     const g = createGuard();
-    await expect(g.checkToolCall({ name: 'x', args: {} }, { allow: {} })).rejects.toThrow();
+    const r = await g.checkToolCall({ name: 'x', args: {} }, { allow: {} });
+    expect(r.verdict).toBe('block');
   });
 });

@@ -1,15 +1,18 @@
 import { hashStr, LRU } from './cache.js';
 import { resolveConfig, resolveSourcePolicy } from './config.js';
+import { DEFAULT_ATTACK_CORPUS, embeddingMatchScore } from './embedding/index.js';
 import { chunkText } from './ml/chunker.js';
 import { CircuitBreaker } from './ml/circuit-breaker.js';
 import { getRunner, warmRunner } from './ml/singleton.js';
 import { normalizeInput } from './normalize/normalize.js';
 import { mkReason } from './reason.js';
 import { aggregateScore, decideVerdict } from './scoring.js';
+import { spotlight } from './spotlight/index.js';
 import { frontGate } from './tiers/l0.js';
 import { analyzeL2 } from './tiers/l2.js';
 import { scanRegex } from './tiers/l3.js';
 import type {
+  EmbeddingCorpusDetector,
   Guard,
   GuardConfig,
   GuardContext,
@@ -18,6 +21,7 @@ import type {
   LocalModelDetector,
   LocalModelResult,
   Reason,
+  RemoteGuardDetector,
   Source,
   Thresholds,
   Verdict,
@@ -97,14 +101,22 @@ export function createGuard(config?: GuardConfig): Guard {
   const cache = new LRU<string, GuardResult>(cfg.cacheMax);
   const hasAsyncDetector = cfg.detectors.some((d) => d.kind !== 'heuristics');
 
-  // Find the localModel detector (if any). Phase 3 supports at most one localModel detector.
+  // Find the localModel / remoteGuard detectors (if any). At most one of each is supported.
   const localModelDetector = cfg.detectors.find(
     (d): d is LocalModelDetector => d.kind === 'localModel',
   );
+  const remoteGuardDetector = cfg.detectors.find(
+    (d): d is RemoteGuardDetector => d.kind === 'remoteGuard',
+  );
+  const embeddingCorpusDetector = cfg.detectors.find(
+    (d): d is EmbeddingCorpusDetector => d.kind === 'embeddingCorpus',
+  );
 
-  // Circuit breaker for Tier 1 ML — per-guard instance. Opens after 5 consecutive
+  // Circuit breakers — per-guard instance, per-tier. Opens after 5 consecutive
   // failures, half-open probe after 30s cooldown.
   const mlCircuitBreaker = new CircuitBreaker();
+  const remoteCircuitBreaker = new CircuitBreaker();
+  const embeddingCircuitBreaker = new CircuitBreaker();
 
   // warmOnBoot: fire-and-forget runner loading + warm inference. The first check()
   // that needs ML will await getRunner() (same cached promise).
@@ -257,20 +269,21 @@ export function createGuard(config?: GuardConfig): Guard {
     return result;
   }
 
-  // Build a degraded result from a Tier 0 verdict when Tier 1 ML fails (circuit open,
-  // timeout, model error). PLAN.md §5: "on error/timeout fall back to Tier-0 verdict +
-  // degraded flag (hard rules still fire)". If the source failMode is 'closed', the flag
-  // band escalates to block (fail-closed — can't verify safety without ML).
+  // Build a degraded result from the current verdict when a higher tier fails (circuit
+  // open, timeout, provider error). PLAN.md §5: "on error/timeout fall back to [prior]
+  // verdict + degraded flag (hard rules still fire)". If the source failMode is 'closed',
+  // the flag band escalates to block (fail-closed — can't verify safety without that tier).
   function degradedResult(
-    t0Result: GuardResult,
+    current: GuardResult,
     sp: { thresholds: Thresholds; failMode: 'open' | 'closed' },
     ctx: GuardContext | undefined,
+    failedTier: 1 | 2,
   ): GuardResult {
     const failClosed = sp.failMode === 'closed';
     const highRisk = (ctx?.highRiskAction ?? false) || failClosed;
     const decision = decideVerdict(
-      t0Result.score,
-      t0Result.reasons,
+      current.score,
+      current.reasons,
       sp.thresholds,
       cfg.hardBlockRules,
       cfg.mode,
@@ -279,41 +292,240 @@ export function createGuard(config?: GuardConfig): Guard {
     const result: GuardResult = {
       verdict: decision.verdict,
       wouldVerdict: decision.wouldVerdict,
-      score: t0Result.score,
-      reasons: t0Result.reasons,
-      sanitized: t0Result.sanitized,
-      normalized: t0Result.normalized,
-      truncated: t0Result.truncated,
-      tier: 1,
-      source: t0Result.source,
+      score: current.score,
+      reasons: current.reasons,
+      sanitized: current.sanitized,
+      normalized: current.normalized,
+      truncated: current.truncated,
+      tier: failedTier,
+      source: current.source,
       shadow: decision.shadow,
-      latencyMs: t0Result.latencyMs,
+      latencyMs: current.latencyMs,
     };
-    result.degraded = { tier: 1, reason: 'degraded_mode' };
+    result.degraded = { tier: failedTier, reason: 'degraded_mode' };
     return result;
   }
 
-  // Full async pipeline with Tier 1 ML escalation. PLAN.md §5 Tier 1:
-  // - Fired only on the uncertain band (flag) or alwaysEscalate sources (retrieved/tool/web/email)
-  // - ML malicious probability folded into the score via noisy-OR (does not replace Tier 0 evidence)
-  // - Circuit breaker + timeout + degraded fallback
-  // - Fed the normalized model copy (sanitized text)
+  // Tier 2 escalation (PLAN.md §5 Tier 2): fired only when still borderline after Tier 1
+  // (or Tier 0 if no Tier 1 is configured) or when gating a highRiskAction (pre-tool-call /
+  // pre-egress). Never synchronous on the common path. The judge's own output is itself
+  // injectable/nondeterministic, so it is folded as ONE weighted signal, never an
+  // unconditional block (PLAN.md §5 Tier 2 caveat). Untrusted content is spotlight-delimited
+  // before being handed to the provider.
+  async function escalateToRemote(
+    current: GuardResult,
+    ctx: GuardContext | undefined,
+    detector: RemoteGuardDetector,
+    sp: { thresholds: Thresholds; failMode: 'open' | 'closed' },
+  ): Promise<GuardResult> {
+    const timeoutMs = detector.timeoutMs ?? 500;
+    const useBreaker = detector.circuitBreaker ?? true;
+    const effectiveFailMode = detector.failMode ?? sp.failMode;
+    const policy = { thresholds: sp.thresholds, failMode: effectiveFailMode };
+
+    if (useBreaker && !remoteCircuitBreaker.canAttempt(nowMs())) {
+      return degradedResult(current, policy, ctx, 2);
+    }
+
+    try {
+      const spotlighted = spotlight(current.sanitized, { mode: 'delimit' });
+      const remoteResult = await withTimeout(
+        detector.provider.scan(spotlighted.text, ctx ?? {}),
+        timeoutMs,
+        `remote guard (${detector.provider.name})`,
+      );
+      if (useBreaker) remoteCircuitBreaker.recordSuccess();
+
+      const remoteReason = mkReason(
+        'remote_guard',
+        'semantic',
+        remoteResult.score,
+        `Remote guard ${detector.provider.name}: ${remoteResult.label ?? 'unknown'} (p=${remoteResult.score.toFixed(3)})`,
+      );
+      const allReasons = [...current.reasons, remoteReason];
+      const newScore = aggregateScore(allReasons);
+      const decision = decideVerdict(
+        newScore,
+        allReasons,
+        sp.thresholds,
+        cfg.hardBlockRules,
+        cfg.mode,
+        ctx?.highRiskAction ?? false,
+      );
+      return {
+        ...current,
+        verdict: decision.verdict,
+        wouldVerdict: decision.wouldVerdict,
+        score: newScore,
+        reasons: allReasons,
+        tier: 2,
+        shadow: decision.shadow,
+      };
+    } catch {
+      if (useBreaker) remoteCircuitBreaker.recordFailure(nowMs());
+      return degradedResult(current, policy, ctx, 2);
+    }
+  }
+
+  // Run Tier 1 ML on the current result if escalation is warranted. Returns the (possibly
+  // unchanged) result plus whether ML actually executed.
+  async function maybeEscalateToMl(
+    current: GuardResult,
+    ctx: GuardContext | undefined,
+    detector: LocalModelDetector,
+    sp: ReturnType<typeof resolveSourcePolicy>,
+  ): Promise<{ result: GuardResult; escalated: boolean }> {
+    const isHighRisk = ctx?.highRiskAction === true;
+    const needsEscalation =
+      sp.alwaysEscalate ||
+      current.wouldVerdict === 'flag' ||
+      (isHighRisk && current.wouldVerdict !== 'allow');
+
+    if (!needsEscalation) return { result: current, escalated: false };
+
+    const timeoutMs = detector.timeoutMs ?? 5000;
+
+    if (!mlCircuitBreaker.canAttempt(nowMs())) {
+      return { result: degradedResult(current, sp, ctx, 1), escalated: true };
+    }
+
+    try {
+      const runner = await getRunner(detector);
+      const mlResult = await classifyChunked(runner, current.sanitized, timeoutMs);
+      mlCircuitBreaker.recordSuccess();
+
+      // Score folding: ML malicious probability → Reason → re-aggregate via noisy-OR →
+      // re-decide verdict. The ML score is one weighted signal, never a replacement for
+      // Tier 0 evidence (PLAN.md §5: "folded into the score, does not replace Tier-0 evidence").
+      const mlReason: Reason = mkReason(
+        'ml_classifier',
+        'semantic',
+        mlResult.score,
+        `ML classifier: ${mlResult.label} (p=${mlResult.score.toFixed(3)}, latency=${mlResult.latencyMs.toFixed(1)}ms)`,
+      );
+      const allReasons = [...current.reasons, mlReason];
+      const newScore = aggregateScore(allReasons);
+      const decision = decideVerdict(
+        newScore,
+        allReasons,
+        sp.thresholds,
+        cfg.hardBlockRules,
+        cfg.mode,
+        ctx?.highRiskAction ?? false,
+      );
+      return {
+        result: {
+          ...current,
+          verdict: decision.verdict,
+          wouldVerdict: decision.wouldVerdict,
+          score: newScore,
+          reasons: allReasons,
+          tier: 1,
+          shadow: decision.shadow,
+        },
+        escalated: true,
+      };
+    } catch {
+      // ML failure (timeout, model error, package missing) — degraded fallback.
+      mlCircuitBreaker.recordFailure(nowMs());
+      return { result: degradedResult(current, sp, ctx, 1), escalated: true };
+    }
+  }
+
+  // Embedding-similarity ensemble (PLAN.md §5/§12 Phase 4 "optional embedding-similarity
+  // ensemble"): compares the input against a reference corpus of canonical attack phrases via
+  // BYO `embed`. Same escalation gate, score-folding, circuit breaker, and degraded-fallback
+  // shape as the other tiers — folded as one weighted signal, never a replacement. Grouped with
+  // Tier 2 in the plan, so it reports tier 2 when it fires.
+  async function maybeEscalateToEmbedding(
+    current: GuardResult,
+    ctx: GuardContext | undefined,
+    detector: EmbeddingCorpusDetector,
+    sp: ReturnType<typeof resolveSourcePolicy>,
+  ): Promise<{ result: GuardResult; escalated: boolean }> {
+    const isHighRisk = ctx?.highRiskAction === true;
+    const needsEscalation =
+      sp.alwaysEscalate ||
+      current.wouldVerdict === 'flag' ||
+      (isHighRisk && current.wouldVerdict !== 'allow');
+
+    if (!needsEscalation) return { result: current, escalated: false };
+
+    const timeoutMs = detector.timeoutMs ?? 2000;
+    const corpus = detector.corpus ?? DEFAULT_ATTACK_CORPUS;
+    const topK = detector.topK ?? 5;
+
+    if (!embeddingCircuitBreaker.canAttempt(nowMs())) {
+      return { result: degradedResult(current, sp, ctx, 2), escalated: true };
+    }
+
+    try {
+      const score = await withTimeout(
+        embeddingMatchScore(detector.embed, current.sanitized, corpus, topK),
+        timeoutMs,
+        'embedding corpus match',
+      );
+      embeddingCircuitBreaker.recordSuccess();
+
+      const reason = mkReason(
+        'embedding_match',
+        'semantic',
+        score,
+        `Embedding-corpus match: top-${topK} avg cosine similarity ${score.toFixed(3)} to known attacks`,
+      );
+      const allReasons = [...current.reasons, reason];
+      const newScore = aggregateScore(allReasons);
+      const decision = decideVerdict(
+        newScore,
+        allReasons,
+        sp.thresholds,
+        cfg.hardBlockRules,
+        cfg.mode,
+        ctx?.highRiskAction ?? false,
+      );
+      return {
+        result: {
+          ...current,
+          verdict: decision.verdict,
+          wouldVerdict: decision.wouldVerdict,
+          score: newScore,
+          reasons: allReasons,
+          tier: 2,
+          shadow: decision.shadow,
+        },
+        escalated: true,
+      };
+    } catch {
+      embeddingCircuitBreaker.recordFailure(nowMs());
+      return { result: degradedResult(current, sp, ctx, 2), escalated: true };
+    }
+  }
+
+  // Full async pipeline chaining Tier 0 -> conditional Tier 1 (ML) -> conditional Tier 2
+  // (remote guard). PLAN.md §5:
+  // - Tier 1 fires on the uncertain band (flag) or alwaysEscalate sources, folds its
+  //   probability into the score via noisy-OR (never replaces Tier 0 evidence).
+  // - Tier 2 fires only when still borderline after Tier 1 (or after Tier 0 if no Tier 1
+  //   is configured) or when gating a highRiskAction — never on the common path.
+  // - Both tiers: circuit breaker + timeout + degraded fallback, fed the normalized model copy.
   async function checkAsyncInternal(
     input: string,
     ctx: GuardContext | undefined,
-    detector: LocalModelDetector,
+    localDetector: LocalModelDetector | undefined,
+    remoteDetector: RemoteGuardDetector | undefined,
+    embeddingDetector: EmbeddingCorpusDetector | undefined,
   ): Promise<GuardResult> {
     const source: Source = ctx?.source ?? DEFAULT_SOURCE;
     const sp = resolveSourcePolicy(cfg, source);
 
-    // Skipped sources: no ML (system prompt is trusted, never scored).
+    // Skipped sources: never scored as an attack (system prompt is trusted).
     if (sp.skip) {
       const res = runTier0(input, ctx);
       emitMetric(res, ctx, false, false);
       return res;
     }
 
-    // Cache check — cached results already include ML if it was run.
+    // Cache check — cached results already include any tier that ran.
     const t0 = nowMs();
     const l0 = frontGate(input, cfg.normalize);
     const l1 = normalizeInput(l0.text, cfg.normalize, ctx?.locale);
@@ -326,85 +538,34 @@ export function createGuard(config?: GuardConfig): Guard {
     }
 
     // Run Tier 0 full pipeline.
-    const t0Result = runTier0(input, ctx);
+    let current = runTier0(input, ctx);
+    let escalated = false;
 
-    // Escalation gate (PLAN.md §5): ML fires on the uncertain band (flag) or
-    // alwaysEscalate sources (retrieved/tool/web/email). highRiskAction forces
-    // escalation even when Tier 0 would-block — the ML opinion is logged + folded.
-    const isHighRisk = ctx?.highRiskAction === true;
-    const needsEscalation =
-      sp.alwaysEscalate ||
-      t0Result.wouldVerdict === 'flag' ||
-      (isHighRisk && t0Result.wouldVerdict !== 'allow');
-
-    if (!needsEscalation) {
-      cache.set(key, t0Result);
-      emitMetric(t0Result, ctx, false, false);
-      return t0Result;
+    if (localDetector) {
+      const ml = await maybeEscalateToMl(current, ctx, localDetector, sp);
+      current = ml.result;
+      escalated = escalated || ml.escalated;
     }
 
-    // Escalate to Tier 1 ML.
-    const timeoutMs = detector.timeoutMs ?? 5000;
-
-    // Circuit breaker — if open, skip ML entirely (degraded fallback).
-    if (!mlCircuitBreaker.canAttempt(nowMs())) {
-      const degraded = degradedResult(t0Result, sp, ctx);
-      degraded.latencyMs = nowMs() - t0;
-      cache.set(key, degraded);
-      emitMetric(degraded, ctx, false, true);
-      return degraded;
+    if (embeddingDetector) {
+      const emb = await maybeEscalateToEmbedding(current, ctx, embeddingDetector, sp);
+      current = emb.result;
+      escalated = escalated || emb.escalated;
     }
 
-    try {
-      const runner = await getRunner(detector);
-      const mlResult = await classifyChunked(runner, t0Result.sanitized, timeoutMs);
-      mlCircuitBreaker.recordSuccess();
-
-      // Score folding: ML malicious probability → Reason → re-aggregate via noisy-OR →
-      // re-decide verdict. The ML score is one weighted signal, never a replacement for
-      // Tier 0 evidence (PLAN.md §5: "folded into the score, does not replace Tier-0 evidence").
-      const mlReason: Reason = mkReason(
-        'ml_classifier',
-        'semantic',
-        mlResult.score,
-        `ML classifier: ${mlResult.label} (p=${mlResult.score.toFixed(3)}, latency=${mlResult.latencyMs.toFixed(1)}ms)`,
-      );
-      const allReasons = [...t0Result.reasons, mlReason];
-      const newScore = aggregateScore(allReasons);
-      const newDecision = decideVerdict(
-        newScore,
-        allReasons,
-        sp.thresholds,
-        cfg.hardBlockRules,
-        cfg.mode,
-        ctx?.highRiskAction ?? false,
-      );
-
-      const finalResult: GuardResult = {
-        verdict: newDecision.verdict,
-        wouldVerdict: newDecision.wouldVerdict,
-        score: newScore,
-        reasons: allReasons,
-        sanitized: t0Result.sanitized,
-        normalized: t0Result.normalized,
-        truncated: t0Result.truncated,
-        tier: 1,
-        source,
-        shadow: newDecision.shadow,
-        latencyMs: nowMs() - t0,
-      };
-      cache.set(key, finalResult);
-      emitMetric(finalResult, ctx, false, true);
-      return finalResult;
-    } catch {
-      // ML failure (timeout, model error, package missing) — degraded fallback.
-      mlCircuitBreaker.recordFailure(nowMs());
-      const degraded = degradedResult(t0Result, sp, ctx);
-      degraded.latencyMs = nowMs() - t0;
-      cache.set(key, degraded);
-      emitMetric(degraded, ctx, false, true);
-      return degraded;
+    if (remoteDetector) {
+      const isHighRisk = ctx?.highRiskAction === true;
+      const needsRemote = current.wouldVerdict === 'flag' || isHighRisk;
+      if (needsRemote) {
+        current = await escalateToRemote(current, ctx, remoteDetector, sp);
+        escalated = true;
+      }
     }
+
+    current.latencyMs = nowMs() - t0;
+    cache.set(key, current);
+    emitMetric(current, ctx, false, escalated);
+    return current;
   }
 
   const guard: Guard = {
@@ -418,27 +579,20 @@ export function createGuard(config?: GuardConfig): Guard {
     },
 
     async check(input, ctx) {
-      // Phase 4 detectors — not yet implemented.
-      for (const d of cfg.detectors) {
-        if (d.kind === 'remoteGuard') {
-          throw new Error(
-            'opensentry: remoteGuard detector is not available in this build (planned Phase 4).',
-          );
-        }
-        if (d.kind === 'embeddingCorpus') {
-          throw new Error(
-            'opensentry: embeddingCorpus detector is not available in this build (planned Phase 4).',
-          );
-        }
-      }
-
-      // No localModel detector → Tier 0 only (sync path, same as checkSync).
-      if (!localModelDetector) {
+      // No async detectors configured → Tier 0 only (sync path, same as checkSync).
+      if (!localModelDetector && !remoteGuardDetector && !embeddingCorpusDetector) {
         return checkSyncInternal(input, ctx);
       }
 
-      // Full async pipeline with Tier 1 ML escalation.
-      return checkAsyncInternal(input, ctx, localModelDetector);
+      // Full async pipeline: Tier 0 -> conditional Tier 1 (ML) -> conditional embedding ensemble
+      // -> conditional Tier 2 (remote).
+      return checkAsyncInternal(
+        input,
+        ctx,
+        localModelDetector,
+        remoteGuardDetector,
+        embeddingCorpusDetector,
+      );
     },
 
     async checkMessages(messages: { role: Source; content: string }[]): Promise<GuardResult[]> {
@@ -492,10 +646,45 @@ export function createGuard(config?: GuardConfig): Guard {
       return wrapped;
     },
 
-    async checkToolCall() {
-      throw new Error(
-        'opensentry: checkToolCall is planned for Phase 4 (agentic tool-call gating).',
-      );
+    // Tool-call guard (PLAN.md §11a, §5 Tier 2): least-privilege assist — scans the
+    // call's args through the full pipeline and enforces an allowlist of tool names
+    // BEFORE execution. highRiskAction is forced so the flag band fails closed (and,
+    // if a remote/local tier is configured, escalates rather than passing silently).
+    // The privilege model itself (what a tool is actually allowed to do) stays in your runtime.
+    async checkToolCall(call, policy) {
+      if (!(call.name in policy.allow)) {
+        const reason = mkReason(
+          'agentic_tool_hijack',
+          'structural',
+          1,
+          `Tool "${call.name}" is not in the allowlist`,
+        );
+        const decision = decideVerdict(
+          1,
+          [reason],
+          cfg.thresholds,
+          cfg.hardBlockRules,
+          cfg.mode,
+          true,
+        );
+        const result: GuardResult = {
+          verdict: decision.verdict,
+          wouldVerdict: decision.wouldVerdict,
+          score: 1,
+          reasons: [reason],
+          sanitized: '',
+          normalized: '',
+          truncated: false,
+          tier: 0,
+          source: 'tool',
+          shadow: decision.shadow,
+          latencyMs: 0,
+        };
+        return result;
+      }
+
+      const argsText = typeof call.args === 'string' ? call.args : JSON.stringify(call.args ?? {});
+      return guard.check(argsText, { source: 'tool', highRiskAction: true });
     },
   };
 

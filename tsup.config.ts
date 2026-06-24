@@ -12,6 +12,7 @@ export default defineConfig({
     'next/index': 'src/middleware/next.ts',
     'onnx/index': 'src/onnx/index.ts',
     'wasm/index': 'src/wasm/index.ts',
+    'remote/index': 'src/remote/index.ts',
   },
   format: ['esm'],
   dts: true,
