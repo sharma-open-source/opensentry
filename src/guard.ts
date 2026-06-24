@@ -397,10 +397,16 @@ export function createGuard(config?: GuardConfig): Guard {
       // Score folding: ML malicious probability → Reason → re-aggregate via noisy-OR →
       // re-decide verdict. The ML score is one weighted signal, never a replacement for
       // Tier 0 evidence (PLAN.md §5: "folded into the score, does not replace Tier-0 evidence").
+      //
+      // minConfidence floors out low-confidence scores before folding (see types.ts) — the
+      // global flag/block thresholds are tuned against Tier 0's evidence, not this model's
+      // calibration, so sub-floor scores are reported (for audit) but contribute 0 weight.
+      const minConfidence = detector.minConfidence ?? 0;
+      const effectiveScore = mlResult.score < minConfidence ? 0 : mlResult.score;
       const mlReason: Reason = mkReason(
         'ml_classifier',
         'semantic',
-        mlResult.score,
+        effectiveScore,
         `ML classifier: ${mlResult.label} (p=${mlResult.score.toFixed(3)}, latency=${mlResult.latencyMs.toFixed(1)}ms)`,
       );
       const allReasons = [...current.reasons, mlReason];

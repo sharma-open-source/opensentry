@@ -8,7 +8,7 @@ declare module '@huggingface/transformers' {
   export const pipeline: (
     task: string,
     model: string,
-    options?: { quantized?: boolean; device?: string; dtype?: string },
+    options?: { device?: string; dtype?: string },
   ) => Promise<
     (text: string, options?: { top_k?: number }) => Promise<Array<{ label: string; score: number }>>
   >;

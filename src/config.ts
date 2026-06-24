@@ -26,9 +26,17 @@ export const DEFAULT_HARD_BLOCK_RULES: readonly ReasonCode[] = [
 ];
 
 // Per-source defaults (PLAN.md §6 policy.perSource).
+//
+// `user` defaults to alwaysEscalate:true (changed from false — see bench/REPORT.md and
+// IMPROVEMENTS_PLAN.md item 1). Real-corpus benchmarking found that harmful-intent/jailbreak
+// attacks with no structural marker (AdvBench, JBB-harmful, DAN-style prompts) score exactly
+// 0 on Tier 0 and never reach the flag band, so under the old default Tier 1 never saw them
+// for the dominant attack channel. This only changes behavior once a localModel/remoteGuard/
+// embeddingCorpus detector is configured — Tier 0-only zero-config is unaffected. Pair with
+// LocalModelDetector.minConfidence (src/types.ts) to avoid raising NotInject over-defense.
 export const DEFAULT_PER_SOURCE: Partial<Record<Source, PerSourcePolicy>> = {
   system: { skip: true }, // never scored as attack
-  user: { alwaysEscalate: false },
+  user: { alwaysEscalate: true },
   retrieved: { alwaysEscalate: true },
   tool: { alwaysEscalate: true },
   web: { alwaysEscalate: true },

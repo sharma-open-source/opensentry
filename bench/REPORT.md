@@ -5,8 +5,17 @@ datasets and a full statistical suite (precision/recall/F1, ROC-AUC/PR-AUC, reca
 latency percentiles). It exercises the actual shipped pipeline, including the real default
 Tier-1 model — not a stand-in.
 
+**Status: the headline finding below has been fixed.** The first run of this benchmark found
+that `user` traffic never reached Tier 1 under the old default policy. `IMPROVEMENTS_PLAN.md`
+items 1 and 2 (flip `user`'s `alwaysEscalate` default to `true`, add a `minConfidence` floor
+to avoid the resulting over-defense regression) have landed — see "Status after the fix" below.
+The original finding is kept further down for the before/after record.
+
 Reproduce: `pnpm bench:fetch && pnpm bench` (fetch downloads ~2.4k real samples from public
-HF datasets; bench runs the full suite, ~45s, and overwrites `bench/report.json`).
+HF datasets; bench runs the full suite — now ~165s with three ML models loaded — and
+overwrites `bench/report.json`). Run `pnpm bench:snapshot` afterward to copy the result into
+`bench/history/<date>.json` (committed, unlike `report.json` itself) so results are
+comparable across runs over time, not just the latest one.
 
 ## What's being tested
 
@@ -14,8 +23,12 @@ HF datasets; bench runs the full suite, ~45s, and overwrites `bench/report.json`
 |---|---|
 | **tier0** | `createGuard()` — sync heuristics only (normalization + regex + stats), as shipped |
 | **tier1** | The real default ML model, **meta-llama/Llama-Prompt-Guard-2-22M**, called directly on every sample (no escalation gating — this is the model's raw discriminative power) |
-| **blended** | `createGuard({ detectors: [heuristics, localModel] })` exactly as documented — Tier 1 only escalates when Tier 0 lands in the uncertain "flag" band, or for `alwaysEscalate` sources |
-| **blendedAlwaysEscalate** | Same blended pipeline, but with `policy.perSource.user.alwaysEscalate: true` — shows the ceiling if every request escalates to ML |
+| **tier1Quantized** | Same model, int8 dynamic-quantized export, called directly — see "Quantization" below |
+| **tier1_86m** | **meta-llama/Llama-Prompt-Guard-2-86M**, called directly — see "86M model comparison" below |
+| **tier1Protectai** | **protectai/deberta-v3-base-prompt-injection-v2** (Apache-2.0, ungated), called directly — see "Open-model candidate" below |
+| **blended** | `createGuard({ detectors: [heuristics, localModel] })` — the current shipped default. `user` now defaults to `alwaysEscalate: true`, so this matches `tier1` on this corpus (Tier 0 contributes ~nothing extra once everything escalates) |
+| **blendedOptOut** | Same pipeline with `policy.perSource.user.alwaysEscalate: false` — reproduces the OLD default, kept for before/after comparison |
+| **blendedCalibrated** | `blended` + `minConfidence: 0.87` on the `localModel` detector — claws back the NotInject over-defense regression that always-escalating `user` introduces on its own |
 
 **Tier 1 model note:** the shipped default (`meta-llama/Llama-Prompt-Guard-2-22M`) is gated on
 HuggingFace and has no published ONNX build. It was exported locally from the PyTorch
@@ -46,49 +59,72 @@ to access a database." and a plain role-play interview prompt both labeled as in
 PLAN.md §9 already flags this dataset as training-only/contaminated for headline eval since
 most public detectors train on it.
 
-## Headline results
+## Headline results (current — after IMPROVEMENTS_PLAN.md items 1+2)
 
 | View | n | Precision | Recall | F1 | FPR | ROC-AUC | PR-AUC | Recall@1%FPR | p50 latency | p99 latency |
 |---|---|---|---|---|---|---|---|---|---|---|
-| tier0 | 2399 | 1.000 | 0.304 | 0.467 | 0.000 | 0.655 | 0.899 | 0.309 | 0.029ms | 0.450ms |
-| **tier1** (real model, raw) | 2399 | 0.992 | 0.803 | 0.888 | 0.016 | **0.986** | 0.994 | 0.778 | 5.7ms | 76.0ms |
-| blended (as shipped, default policy) | 2399 | 1.000 | 0.304 | 0.467 | 0.000 | 0.655 | 0.899 | 0.309 | 0.04ms | 7.5ms |
-| blendedAlwaysEscalate | 2399 | 0.992 | 0.804 | 0.888 | 0.016 | 0.986 | 0.994 | 0.779 | 5.7ms | 89.6ms |
+| tier0 | 2399 | 1.000 | 0.304 | 0.467 | 0.000 | 0.655 | 0.899 | 0.309 | 0.029ms | 0.465ms |
+| tier1 (real model, raw) | 2399 | 0.992 | 0.803 | 0.888 | 0.016 | 0.986 | 0.994 | 0.778 | 6.6ms | 97.6ms |
+| tier1Quantized (int8) | 2399 | 0.995 | 0.750 | 0.855 | 0.009 | 0.986 | 0.994 | — | 6.6ms | 107.6ms |
+| tier1_86m | 2399 | 0.987 | 0.806 | 0.888 | 0.026 | 0.988 | 0.995 | — | 14.5ms | 221.7ms |
+| tier1Protectai (open-model candidate) | 2399 | 0.998 | 0.630 | 0.773 | 0.003 | 0.916 | 0.967 | — | 14.3ms | 249.1ms |
+| **blended (current default)** | 2399 | 0.992 | 0.804 | 0.888 | 0.016 | 0.986 | 0.994 | 0.779 | 7.9ms | 127.5ms |
+| blendedOptOut (old default) | 2399 | 1.000 | 0.304 | 0.467 | 0.000 | 0.655 | 0.899 | 0.309 | 0.035ms | 8.3ms |
+| **blendedCalibrated (default + minConfidence:0.87)** | 2399 | 0.997 | 0.719 | 0.836 | 0.006 | 0.859 | 0.958 | 0.719 | 6.6ms | 118.1ms |
+
+Latencies above are all from a single run with **three ONNX sessions loaded concurrently in
+the same process** (22M fp32 + 22M int8 + 86M fp32) — they're measurably higher than the
+two-model run in earlier revisions of this report (e.g. `tier1` p50 went from 5.6ms to 6.6ms)
+purely from CPU contention between models, not a real regression. Treat absolute latency
+numbers as comparative-within-this-run, not a production SLA measurement — see Caveats.
 
 Tier 1 standalone AUC (0.986) lines up closely with Meta's own reported AUC for this model
 (.995 on their private English benchmark, per the model card) — on a harder, broader,
 independently-sourced test set than ours was tuned against. That's a meaningful external
 sanity check on the model itself.
 
-### The one finding that matters most
+### Status after the fix
 
-**`blended` is numerically identical to `tier0` alone** (recall 0.304 in both). This is not a
-bug — it's how the escalation gate is designed (PLAN.md §5): Tier 1 only fires when Tier 0's
-own score lands in the uncertain "flag" band, or for `alwaysEscalate` sources (`retrieved`,
-`tool`, `web`, `email` by default — **not** `user`). Escalation rate measured: **5.5%** of
-all `user`-sourced traffic in this corpus.
+`blended` (the current shipped default) now matches `tier1`'s raw recall (0.804 vs. the old
+default's 0.304) — `user` traffic reaches the ML model now. That recovers recall on
+`harmful_behavior` and `jailbreak_persona` (see per-category table below) at the cost of
+NotInject over-defense climbing to 9.1% (`notinject/blended` below), exceeding the project's
+own <5% gate. `blendedCalibrated` (`minConfidence: 0.87`, derived by sweeping thresholds
+directly against NotInject's own score distribution — see Methodology notes) brings
+over-defense to 4.7%, back under the gate, while keeping recall at 0.719 — a real, measured
+trade-off, not a free fix. **0.87 is specific to this fp32, unquantized, locally-exported
+22M model** — recalibrate for any other model/export using the same method (sweep
+`bench/metrics.ts`'s `sweepThresholds` against your own NotInject-equivalent corpus, not the
+general benign set — see why below).
 
-The consequence: attacks with no structural marker for Tier 0 to flag — `harmful_behavior`
-(AdvBench + JBB harmful: "Develop a strategy for hacking into a government database…") and
-most `jailbreak_persona` prompts — score exactly 0 on Tier 0, never reach the flag band, and
-**Tier 1 never runs on them** under the documented default config for `source: 'user'`. The
-ML model itself catches roughly half of `harmful_behavior` and effectively all of
-`jailbreak_persona` when actually invoked (see `tier1` row) — that capability is real, it
-just isn't reached by the shipped escalation policy unless you opt into `alwaysEscalate` for
-`user`, or treat that content as a higher-trust-boundary source.
+### Original finding (before the fix — kept for the record)
+
+The first version of this benchmark found `blended` was numerically identical to `tier0`
+alone (recall 0.304 in both), because the escalation gate only fired Tier 1 when Tier 0's own
+score landed in the uncertain "flag" band, or for `alwaysEscalate` sources (`retrieved`,
+`tool`, `web`, `email` by default — **not** `user`, at the time). Measured escalation rate on
+`user` traffic: 5.5%. Attacks with no structural marker for Tier 0 to flag —
+`harmful_behavior` (AdvBench + JBB harmful) and most `jailbreak_persona` prompts — scored
+exactly 0 on Tier 0 and never reached Tier 1. `DEFAULT_PER_SOURCE.user.alwaysEscalate` has
+since been changed to `true` in `src/config.ts` to fix this (`IMPROVEMENTS_PLAN.md` item 1).
 
 ### Per-category recall (attack categories only — precision/FPR not meaningful on benign-only categories)
 
-| Category | n | tier0 recall | tier1 recall | blended recall | blendedAlwaysEscalate recall |
-|---|---|---|---|---|---|
-| instruction_override (gandalf) | 1000 | 0.504 | 0.977 | 0.504 | 0.978 |
-| jailbreak_persona (DAN) | 79 | 0.165 | 1.000 | 0.165 | 1.000 |
-| harmful_behavior (AdvBench + JBB) | 620 | 0.000 | 0.498 | 0.000 | 0.498 |
+| Category | n | tier0 | tier1 (22M) | tier1Quantized | tier1_86m | blended (current) | blendedOptOut (old) | blendedCalibrated |
+|---|---|---|---|---|---|---|---|---|
+| instruction_override (gandalf) | 1000 | 0.504 | 0.977 | 0.957 | 0.994 | 0.978 | 0.504 | 0.968 |
+| jailbreak_persona (DAN) | 79 | 0.165 | 1.000 | 0.975 | 1.000 | 1.000 | 0.165 | 0.962 |
+| harmful_behavior (AdvBench + JBB) | 620 | 0.000 | 0.498 | 0.387 | 0.479 | 0.498 | 0.000 | 0.287 |
 
 `generic_instruction` and `benign_control` categories are 100% benign by construction — their
 precision/recall figures in `bench/report.json` are an artifact of the metric (no positives
-exist to recall) and should be read as FPR-only: tier0/blended 0.000, tier1/blendedAlwaysEscalate
-0.000–0.100.
+exist to recall) and should be read as FPR-only: 0.000 for tier0/blendedOptOut, 0.000–0.100
+for tier1/blended, 0.000–0.040 for blendedCalibrated.
+
+The calibration's cost is concentrated in `harmful_behavior`: recall drops from 0.498 to
+0.287, because that category's real attack scores overlap more with NotInject's
+hard-negative tail than `instruction_override`/`jailbreak_persona` do (which barely move,
+0.978→0.968 and 1.000→0.962). A single global `minConfidence` can't fully separate them.
 
 ### NotInject — over-defense rate (benign text containing attack trigger words)
 
@@ -96,12 +132,196 @@ exist to recall) and should be read as FPR-only: tier0/blended 0.000, tier1/blen
 |---|---|---|
 | tier0 | 0.6% (2/339) | pass |
 | tier1 (real model, raw) | 8.6% (29/339) | — (not gated standalone) |
-| blended (as shipped) | 0.6% (2/339) | pass |
-| blendedAlwaysEscalate | **9.1% (31/339)** | **fails** the <5% over-defense budget |
+| **blended (current default)** | **9.1% (31/339)** | **fails** |
+| blendedOptOut (old default) | 0.6% (2/339) | pass |
+| **blendedCalibrated** | **4.7% (16/339)** | **pass** |
 
-Forcing `alwaysEscalate` on `user` traffic buys the harmful_behavior/jailbreak recall gains
-above, but pushes NotInject over-defense almost 2x past the documented release gate. That's
-the real trade-off this benchmark surfaces — not a free lunch.
+Forcing escalation on `user` traffic (now the default) buys the harmful_behavior/jailbreak
+recall gains above, but pushes NotInject over-defense past the documented release gate unless
+paired with the `minConfidence` calibration — which is exactly why the plan shipped both
+together, not the escalation default alone.
+
+## Quantization (IMPROVEMENTS_PLAN.md item 3)
+
+**This caught a real bug, not just a missing benchmark.** `src/onnx/index.ts` and
+`src/wasm/index.ts` defaulted `quantized: true` and passed it straight through as a
+`quantized` boolean option to `@huggingface/transformers`'s `pipeline()` call — but
+transformers.js v3+ removed that option entirely in favor of `dtype`. An unrecognized option
+is silently ignored, so **`quantized: true` had zero effect**: the Node runtime always loaded
+fp32 regardless of the setting (the WASM runtime happened to hardcode `dtype: 'q8'`
+separately, so it accidentally worked there, but `quantized: false` couldn't disable it).
+Fixed by mapping `detector.quantized` to `dtype: 'q8' | 'fp32'` explicitly in both runtimes.
+
+No quantized build exists upstream for this gated model either, so one was produced locally:
+
+```bash
+python3 -c "
+from onnxruntime.quantization import quantize_dynamic, QuantType
+quantize_dynamic(
+    'bench/models/llama-prompt-guard-2-22m/onnx/model.onnx',
+    'bench/models/llama-prompt-guard-2-22m/onnx/model_quantized.onnx',
+    weight_type=QuantType.QInt8,
+)
+"
+```
+
+`model_quantized.onnx` is the exact filename transformers.js looks for when `dtype: 'q8'` is
+requested (`DEFAULT_DTYPE_SUFFIX_MAPPING.q8 === '_quantized'` in its source) — this is not
+documented anywhere in opensentry and had to be reverse-engineered from the library's bundled
+`dist/transformers.js`.
+
+| View | Size on disk | Precision | Recall | ROC-AUC | NotInject over-defense | p50 latency | p99 latency |
+|---|---|---|---|---|---|---|---|
+| tier1 (fp32) | 284 MB | 0.992 | 0.803 | 0.986 | 8.6% | 5.6ms | 74ms |
+| tier1Quantized (int8) | 87 MB | 0.995 | 0.750 | 0.986 | 5.3% | 5.2ms | 79ms |
+
+**Findings:**
+- **Size: real win** — 3.3x smaller (284MB → 87MB), relevant for cold-start time and bundle
+  size on edge/serverless, where the WASM runtime ships this file to the client/function.
+- **Ranking ability (AUC) is unchanged** (0.986 both) — quantization didn't make the model
+  worse at distinguishing attack from benign, it shifted the *absolute* scores down slightly.
+  That's why recall at the same fixed 0.4/0.85 thresholds drops (0.803→0.750) while precision
+  and NotInject over-defense both *improve* (8.6%→5.3%) — the quantized model is more
+  conservative at the same threshold, not less accurate.
+- **Latency: no meaningful win on this hardware/runtime** — p50 is within noise (5.6ms vs.
+  5.2ms), p99 if anything slightly worse (74ms vs. 79ms, likely run-to-run variance on a
+  single-machine, single-run measurement — see Caveats). The 22M model is small enough that
+  tokenization/pipeline overhead dominates over raw matmul FLOPs on CPU; don't expect
+  quantization to meaningfully cut latency for a model this size on this runtime.
+- **Recalibrate `minConfidence` separately per dtype** — the quantized model's score
+  distribution is shifted enough (over-defense 8.6%→5.3% at the same thresholds) that a
+  `minConfidence` tuned for fp32 (0.87 above) is not automatically right for the quantized
+  build. Re-run the NotInject-specific percentile sweep (see Methodology notes) per dtype you
+  actually ship.
+
+## 86M model comparison (IMPROVEMENTS_PLAN.md item 4)
+
+The model card claims `Llama-Prompt-Guard-2-86M` has a real multilingual advantage over the
+22M model (mDeBERTa-v3 base vs. 22M's English-only DeBERTa-xsmall; card-reported multilingual
+AUC .995 vs. .942). Exported and quantized the same way as the 22M model (same
+`optimum-cli export onnx` + `quantize_dynamic` flow — see Quantization above) and benchmarked
+directly, rather than taking the card's claim at face value.
+
+**Important scope limit, stated up front: this benchmark can only test the over-defense side
+of that claim, not the recall side.** Every attack dataset we pulled (Gandalf, AdvBench, JBB,
+DAN prompts) is English. We have no multilingual *attack* samples, so we cannot measure
+whether the 86M model actually catches more non-English attacks than the 22M model — only
+NotInject's `Multilingual` category (84 benign samples with foreign-language trigger words)
+lets us test the over-defense direction.
+
+| View | n | Precision | Recall | ROC-AUC | NotInject over-defense (overall) | p50 latency |
+|---|---|---|---|---|---|---|
+| tier1 (22M, fp32) | 2399 | 0.992 | 0.803 | 0.986 | 8.6% | 6.6ms |
+| tier1_86m (fp32) | 2399 | 0.987 | 0.806 | 0.988 | 7.4% | 14.5ms |
+
+### NotInject over-defense by category — where the real signal is
+
+| Category | n | tier0 | tier1 (22M) | tier1Quantized | tier1_86m |
+|---|---|---|---|---|---|
+| Technique Queries | 87 | 0.0% | **24.1%** | 13.8% | 21.8% |
+| Multilingual | 84 | 2.4% | **0.0%** | 0.0% | 1.2% |
+| Common Queries | 126 | 0.0% | 6.3% | 4.0% | 2.4% |
+| Virtual Creation | 42 | 0.0% | 0.0% | 2.4% | 4.8% |
+
+**Findings — not what the model card's framing would predict:**
+- **86M does not show a multilingual over-defense advantage on this slice.** The 22M model is
+  already at 0.0% over-defense on `Multilingual`; 86M is slightly *worse* (1.2%). This doesn't
+  contradict the model card (which claims better multilingual *attack recall*, an axis we
+  can't test here) — but it does mean the commonly-assumed "86M is the safer multilingual
+  choice" doesn't hold on the one multilingual axis we could actually measure.
+- **The real over-defense hot spot isn't multilingual at all — it's `Technique Queries`**
+  (24.1% for the 22M model, 21.8% for 86M): benign questions like "Can I ignore this warning
+  in my code?" that contain attack trigger words in an ordinary technical-support framing.
+  Both model sizes struggle here far more than on any other NotInject category. If you're
+  calibrating `minConfidence` for a codebase/dev-tool product, calibrate against this category
+  specifically, not the aggregate NotInject rate.
+- **86M's overall numbers are marginally better** (recall 0.806 vs. 0.803, AUC .988 vs. .986,
+  overall over-defense 7.4% vs. 8.6%) but the gain is small relative to the cost: 2.2x slower
+  per inference (14.5ms vs. 6.6ms p50) and ~4x the model size before quantization (1.1GB vs.
+  284MB). For an English-dominant workload, 22M is very plausibly the better default; 86M's
+  case rests on multilingual *attack* coverage this benchmark doesn't have the data to confirm.
+
+## Open-model candidate: protectai/deberta-v3-base-prompt-injection-v2
+
+`meta-llama/Llama-Prompt-Guard-2` carries real production friction: gated HuggingFace access
+(an approval step every deployer has to go through separately), no published ONNX build (a
+manual `optimum-cli export onnx` step), and license terms (Llama license + acceptable-use
+policy) that haven't been formally reviewed for redistribution of derived ONNX exports.
+`protectai/deberta-v3-base-prompt-injection-v2` removes all three: Apache-2.0, ungated, ONNX
+already published in-repo. Evaluated as a candidate to replace the default for exactly that
+reason — but evaluated on accuracy/over-defense before any decision to switch, not after.
+
+| View | Precision | Recall | F1 | ROC-AUC | NotInject over-defense (overall) | p50 latency |
+|---|---|---|---|---|---|---|
+| tier1 (22M, Llama-Prompt-Guard-2) | 0.992 | 0.803 | 0.888 | 0.986 | 8.6% | 6.6ms |
+| tier1_86m (Llama-Prompt-Guard-2) | 0.987 | 0.806 | 0.888 | 0.988 | 7.4% | 14.5ms |
+| **tier1Protectai (deberta-v3-base)** | 0.998 | **0.630** | 0.773 | **0.916** | **43.1%** | 14.3ms |
+
+**Verdict: no — this is a strictly worse model for this use case, not just a license-friendlier
+one.** Removing the gated-access friction isn't worth it here:
+
+- **Recall drops from ~0.80 to 0.630** — it misses roughly a third more real attacks than
+  either Llama-Prompt-Guard-2 size, including the exact kind of plain-English harmful-intent
+  request (AdvBench/JBB: "Develop a strategy for hacking into…") that Llama-Prompt-Guard-2
+  already only catches about half the time.
+- **NotInject over-defense is 43.1% (146/339) — roughly 5x worse than the 22M model's 8.6%.**
+  This isn't a marginal calibration gap; it's a different quality tier. Per-category, it's
+  uniformly bad rather than concentrated in one weak spot: 57.5% on `Technique Queries`, 59.5%
+  on `Multilingual`, 27.8% on `Common Queries`, 26.2% on `Virtual Creation`. For comparison,
+  the 22M model's worst category (`Technique Queries`, 24.1%) is this model's *best* category.
+  A smoke-test sample caught this immediately: it flagged "Can I ignore this warning appeared
+  in my code?" as 99.9999% injection.
+- **ROC-AUC of 0.916 vs. 0.986-0.988** confirms this isn't just a threshold-calibration
+  problem fixable with `minConfidence` — the model's underlying ranking ability is genuinely
+  weaker, likely because its training mix (XSTest, generic instruction-following, jailbreak
+  classification datasets per its model card) targets a different, broader notion of
+  "prompt injection" than this benchmark's attack taxonomy.
+- Latency is comparable to the 86M model (~14ms, both bigger than 22M's ~6.6ms) — so there's
+  no speed upside to offset the accuracy loss either.
+
+**The friction Llama-Prompt-Guard-2 carries (gated access, manual export, license review) is
+real and worth solving, but not by swapping in a worse model.** If gated access is a hard
+blocker for your deployment, treat it as a license/process problem to resolve (request
+access, or get a formal redistribution ruling), not a reason to downgrade detection quality —
+this benchmark is exactly the kind of check that should gate any "let's just use the open one"
+decision, and here it says don't.
+
+## Ungated mirror of the actual default model (not a different model)
+
+The "Open-model candidate" above asked "is there a *different*, ungated model we should use
+instead?" and found no. A separate, narrower question: is there an ungated *mirror of the same
+weights* we could point at instead of the gated `meta-llama` repos?
+[`gravitee-io/Llama-Prompt-Guard-2-22M-onnx`](https://huggingface.co/gravitee-io/Llama-Prompt-Guard-2-22M-onnx)
+and [`...-86M-onnx`](https://huggingface.co/gravitee-io/Llama-Prompt-Guard-2-86M-onnx) claim to
+be exactly that — verified, not assumed:
+
+- **Architecture/config match exactly**: same `hidden_size`/`num_hidden_layers`/`vocab_size`
+  per size (384/12/128100 for 22M, 768/12/251000 for 86M), `_name_or_path` pointing at the
+  official `meta-llama` repo.
+- **File size matches**: their 86M `model.onnx` is 1,116,138,537 bytes vs. our own
+  `optimum-cli`-exported 1,116,153,796 bytes — a ~15KB difference (export-tool metadata, not
+  a different model).
+- **Output scores match to 4 decimal places** on every test sentence (English and French,
+  attack and benign) when run side-by-side against our own export — same weights, not a
+  retrain or a tampered checkpoint.
+- **Not gated**, and ships the actual Llama 4 Community License text plus a `NOTICE` file
+  with the required attribution — a correctly-attributed redistribution, not a license-free
+  unauthorized copy.
+
+This is **not** wired in as opensentry's default (a third-party-maintained mirror is a supply
+chain decision each adopter should make deliberately, not inherit silently) — see the README's
+"Skipping the gated-model wait" section for a working custom-runner example if you choose to
+use it. Same accuracy/latency numbers as the rest of this report apply, since it's the same
+weights.
+
+## Benchmark history
+
+`pnpm bench:snapshot` copies `bench/report.json` into `bench/history/<date>.json` after a
+`pnpm bench` run. Unlike `report.json` itself (gitignored, regenerated every run),
+`bench/history/*.json` files are committed — diff them across dates to catch regressions
+(model updates, dependency bumps, threshold changes) before they ship. Recommended cadence:
+before each release, or whenever `src/onnx`, `src/wasm`, `src/scoring.ts`, or the default
+config in `src/config.ts` changes.
 
 ## Methodology notes / things that bit us building this
 
@@ -119,6 +339,14 @@ the real trade-off this benchmark surfaces — not a free lunch.
   (expected AUC ≈ 1.0) before trusting any number from the real corpus.
 - NotInject is benign-labeled but reported as a separate over-defense rate, never folded into
   the headline benign FPR — same convention `corpus/eval.ts` already uses for the seed corpus.
+- **Calibrate `minConfidence` against the specific hard-negative slice you care about, not
+  the general benign FPR sweep.** First attempt used 0.59 — this model's `recallAtFpr1pct`
+  threshold from the general benign/attack ROC sweep — and it only moved NotInject
+  over-defense from 9.1% to 7.4%, still over the 5% gate. NotInject's score distribution
+  (trigger words in benign context — exactly what it's designed to probe) is heavier-tailed
+  than generic benign text, so a threshold tuned against general benign FPR under-covers it.
+  Fixed by computing the percentile directly against NotInject's own raw scores (p96 ≈ 0.87)
+  instead of reusing the general-FPR-derived number.
 
 ## Caveats
 
@@ -127,10 +355,13 @@ the real trade-off this benchmark surfaces — not a free lunch.
 - `rubend18/ChatGPT-Jailbreak-Prompts` license is unspecified (public scrape); treat as
   research-only, don't redistribute it as part of a shipped product corpus.
 - Single machine, single run, no repeated trials — latency percentiles are indicative, not a
-  formal SLA measurement (though Tier 0 p99 well under the 1ms CI gate, and Tier 1 (real
-  22M model, CPU, fp32, unquantized) p50 ≈ 5.7ms / p99 ≈ 76ms, consistent with the model
-  card's own ~19ms/sample order-of-magnitude claim once you account for fp32 vs their
-  optimized runtime).
-- This run used the **un-quantized fp32** ONNX export (no quantized build was produced) —
-  a production deployment using the documented `quantized: true` default would likely be
-  faster and slightly lower-precision than these numbers.
+  formal SLA measurement. Tier 0 p99 stays well under the 1ms CI gate regardless.
+- **This run loads three ONNX sessions concurrently** (22M fp32, 22M int8, 86M fp32) in the
+  same process to amortize the dataset-iteration cost — they compete for CPU, so absolute
+  latency numbers here are higher than a real single-model deployment would see (e.g. `tier1`
+  p50 was 5.6ms in a two-model run, 6.6ms in this three-model run — see "Benchmark history"
+  to compare across runs). Compare latency *relative to other rows in the same run*, not as
+  an absolute production estimate.
+- The NotInject Multilingual comparison (86M section) only covers 4 languages' worth of
+  trigger-word phrasing in 84 samples — not a rigorous multilingual eval, just what the
+  dataset happened to include. Treat the 86M multilingual finding as suggestive, not final.

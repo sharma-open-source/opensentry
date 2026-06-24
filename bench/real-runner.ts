@@ -4,8 +4,14 @@
 //
 // Label convention: the exported config.json carries no id2label (verified against the
 // raw upstream config.json — Meta's card example assumes a mapping that isn't actually in
-// the repo's config). MALICIOUS_LABEL_INDEX below is fixed empirically in bench/calibrate.bench-test.ts
-// rather than guessed from docs.
+// the repo's config). MALICIOUS_LABEL below was fixed empirically against known attack/benign
+// text (see IMPROVEMENTS_PLAN.md) rather than guessed from docs.
+//
+// dtype defaults to 'fp32' (matches the original model.onnx export). Pass 'q8' to load
+// model_quantized.onnx instead (produced via onnxruntime.quantization.quantize_dynamic —
+// see bench/REPORT.md "Quantization" section for the exact command) — this is the file
+// transformers.js looks for when dtype:'q8' is requested (src/onnx/index.ts uses the same
+// mapping for the shipped `quantized` detector option).
 import type { LocalModelResult, LocalModelRunner } from '../src/types.js';
 
 interface TransformersPipeline {
@@ -17,7 +23,7 @@ interface TransformersModule {
   pipeline: (
     task: string,
     model: string,
-    options?: { device?: string },
+    options?: { device?: string; dtype?: string },
   ) => Promise<TransformersPipeline>;
   env: {
     allowLocalModels: boolean;
@@ -32,6 +38,7 @@ export const MALICIOUS_LABEL = 'LABEL_1';
 export async function createRealPromptGuardRunner(
   localModelPath: string,
   modelDirName: string,
+  dtype: 'fp32' | 'q8' = 'fp32',
 ): Promise<LocalModelRunner> {
   const mod = (await import('@huggingface/transformers')) as unknown as TransformersModule;
   mod.env.allowLocalModels = true;
@@ -39,7 +46,10 @@ export async function createRealPromptGuardRunner(
   mod.env.localModelPath = localModelPath;
   mod.env.backends.onnx.wasm.wasmPaths = undefined;
 
-  const classifier = await mod.pipeline('text-classification', modelDirName, { device: 'cpu' });
+  const classifier = await mod.pipeline('text-classification', modelDirName, {
+    device: 'cpu',
+    dtype,
+  });
   let warmed = false;
 
   return {

@@ -91,7 +91,7 @@ const result = guard.checkSync(userInput, {
 
 ### `guard.check(input, ctx?): Promise<GuardResult>`
 
-Full tiered pipeline: Tier 0 → conditional Tier 1 (local ML) → conditional Tier 2 (remote guard). If a `localModel` detector is configured, Tier 1 is invoked on the uncertain flag-band, on `alwaysEscalate` sources (retrieved/tool/web/email), or when `highRiskAction` is set. If a `remoteGuard` detector is configured, Tier 2 is invoked only when still borderline after Tier 1 (or after Tier 0 if no Tier 1 is configured) or when `highRiskAction` is set — never on the common path. Each tier's score is folded into the aggregate via noisy-OR; the verdict is re-decided with all evidence at every step.
+Full tiered pipeline: Tier 0 → conditional Tier 1 (local ML) → conditional Tier 2 (remote guard). If a `localModel` detector is configured, Tier 1 is invoked on the uncertain flag-band, on `alwaysEscalate` sources (**all sources except `system` default to `alwaysEscalate: true`**, including `user` — see [Real-corpus benchmark](#real-corpus-benchmark) for why), or when `highRiskAction` is set. If a `remoteGuard` detector is configured, Tier 2 is invoked only when still borderline after Tier 1 (or after Tier 0 if no Tier 1 is configured) or when `highRiskAction` is set — never on the common path. Each tier's score is folded into the aggregate via noisy-OR; the verdict is re-decided with all evidence at every step.
 
 ```ts
 const guard = createGuard({
@@ -264,6 +264,15 @@ pnpm add @huggingface/transformers onnxruntime-node
 pnpm add @huggingface/transformers
 ```
 
+`quantized: true` (the default) loads the model's `q8` build, which transformers.js expects
+as a file named `model_quantized.onnx` alongside the regular `model.onnx` in the model
+repo/local export's `onnx/` directory. If a model repo only ships fp32 (no quantized
+variant — true of `meta-llama/Llama-Prompt-Guard-2-22M/86M` themselves, since they're
+PyTorch-only and gated, with no published ONNX build at all), you need to produce one
+yourself, e.g. via `onnxruntime.quantization.quantize_dynamic` — see
+[bench/REPORT.md](bench/REPORT.md#quantization-improvements_planmd-item-3) for the exact
+command and a measured fp32-vs-quantized accuracy/latency comparison.
+
 ### Usage — Node
 
 ```ts
@@ -298,13 +307,36 @@ const guard = createGuard({
 
 1. **Escalation gate** — ML fires only when needed:
    - Tier 0 `wouldVerdict === 'flag'` (uncertain band)
-   - Source has `alwaysEscalate: true` (retrieved/tool/web/email)
+   - Source has `alwaysEscalate: true` — **default for every source except `system`**, including `user` (changed from `false`; see [Real-corpus benchmark](#real-corpus-benchmark) — Tier 0 alone misses most harmful-intent/jailbreak text since it has no structural marker, so it never reached Tier 1 under the old default). Opt back out per-source with `policy.perSource.<source>.alwaysEscalate: false`
    - `highRiskAction: true` (forces escalation even on would-block)
 2. **Chunking** — inputs >512 tokens are split on sentence boundaries; chunks run in parallel; the max malicious score is taken
-3. **Score folding** — ML probability → `Reason(code='ml_classifier', category='semantic')` → re-aggregated via noisy-OR with all Tier 0 reasons → verdict re-decided. ML is one weighted signal, never replaces Tier 0 evidence
+3. **Score folding** — ML probability → floored to 0 if below `minConfidence` (optional, default 0 — see below) → `Reason(code='ml_classifier', category='semantic')` → re-aggregated via noisy-OR with all Tier 0 reasons → verdict re-decided. ML is one weighted signal, never replaces Tier 0 evidence
 4. **Circuit breaker** — after 5 consecutive failures, ML is short-circuited for 30s (degraded fallback). Half-open probe after cooldown
 5. **Timeout** — default 5000ms; on timeout, falls back to Tier 0 verdict + `degraded` flag
 6. **Degraded fallback** — on failure, returns Tier 0 verdict with `degraded: { tier: 1, reason: 'degraded_mode' }`. `failMode: 'closed'` escalates flag → block (can't verify safety without ML)
+
+### Calibrating ML confidence (`minConfidence`)
+
+The global `thresholds.flag`/`thresholds.block` are tuned against Tier 0's structural
+evidence — a given ML model's moderate-confidence scores aren't necessarily reliable enough
+to clear that same bar without raising false positives (the [Real-corpus benchmark](#real-corpus-benchmark)
+measured 9.1% over-defense on NotInject-style hard negatives once `user` always escalates).
+`minConfidence` floors out ML scores below a threshold *before* they fold into the aggregate,
+without touching Tier 0's own thresholds:
+
+```ts
+const guard = createGuard({
+  detectors: [
+    { kind: 'heuristics' },
+    { kind: 'localModel', runtime: 'node', minConfidence: 0.6 }, // calibrate per your model/export
+  ],
+});
+```
+
+There's no universal default (0.6 above is illustrative) — a different model, a quantized
+export, or a fine-tuned checkpoint will calibrate differently. Derive your own value from
+`bench/metrics.ts`'s `recallAtFpr` sweep against your own traffic or corpus: pick the
+threshold that hits your FPR budget, then set `minConfidence` there.
 
 ### Custom runner
 
@@ -328,6 +360,60 @@ const guard = createGuard({
   ],
 });
 ```
+
+### Skipping the gated-model wait: an ungated mirror
+
+The shipped default model (`meta-llama/Llama-Prompt-Guard-2-22M`/`86M`) is **gated** on
+HuggingFace — every deployer has to request access and wait for approval, and there's no
+official ONNX build (see "Calibrating ML confidence" above and
+[bench/REPORT.md](bench/REPORT.md) for how we worked around that ourselves).
+[`gravitee-io/Llama-Prompt-Guard-2-22M-onnx`](https://huggingface.co/gravitee-io/Llama-Prompt-Guard-2-22M-onnx)
+and [`...-86M-onnx`](https://huggingface.co/gravitee-io/Llama-Prompt-Guard-2-86M-onnx) are
+**ungated** ONNX mirrors of the exact same weights — verified in this project by running both
+side-by-side and comparing scores on the same inputs (matched to 4 decimal places; see
+[bench/REPORT.md](bench/REPORT.md#ungated-mirror-of-the-actual-default-model-not-a-different-model)).
+They ship the actual Llama 4 Community License + a proper `NOTICE` file, i.e. the
+redistribution is correctly attributed, not just absent.
+
+This is **not** opensentry's default — it's a third-party-maintained mirror outside our
+supply chain, and you still inherit the Llama 4 license's obligations yourself (attribution,
+"Built with Llama", the >700M-MAU clause). Decide deliberately, not by default. If you do use
+it, wire it through the custom-runner interface (the model files sit at the repo root, not
+the `onnx/` subfolder transformers.js expects by default, so `subfolder` needs an override):
+
+```ts
+import { createGuard } from 'opensentry';
+import { pipeline } from '@huggingface/transformers';
+
+const classifier = await pipeline('text-classification', 'gravitee-io/Llama-Prompt-Guard-2-22M-onnx', {
+  device: 'cpu',
+  dtype: 'fp32',     // or 'q8' for their model.quant.onnx — confirm before relying on it in prod
+  subfolder: '',     // files are at the repo root, not the conventional onnx/ subfolder
+});
+
+const guard = createGuard({
+  detectors: [
+    { kind: 'heuristics' },
+    {
+      kind: 'localModel',
+      runner: {
+        loaded: true,
+        async warm() { await classifier('warmup', { top_k: 2 }); },
+        async classify(text) {
+          const t0 = performance.now();
+          const out = await classifier(text, { top_k: 2 });
+          const malicious = out.find((o) => o.label === 'MALICIOUS')?.score ?? 0;
+          return { score: malicious, label: malicious > 0.5 ? 'injection' : 'benign', latencyMs: performance.now() - t0 };
+        },
+        dispose() { classifier.dispose?.(); },
+      },
+    },
+  ],
+});
+```
+
+Same accuracy/latency/over-defense numbers as the `meta-llama` source apply (it's the same
+weights) — see `bench/REPORT.md`'s 86M section for the full numbers before deciding.
 
 ## Tier 2 — remote guard / LLM-as-judge
 
@@ -468,14 +554,26 @@ Scores use **noisy-OR** aggregation: `score = 1 - ∏(1 - w_i)`. A single weight
 const guard = createGuard({
   policy: {
     perSource: {
-      system:   { skip: true },           // never scored (default)
-      user:     { thresholds: { block: 0.9 } }, // stricter for direct user input
-      retrieved: { alwaysEscalate: true }, // RAG context — escalate to ML
-      web:      { alwaysEscalate: true }, // web content — escalate
-      tool:     { alwaysEscalate: true },
-      email:    { alwaysEscalate: true },
+      system:    { skip: true },                // never scored (default)
+      user:      { thresholds: { block: 0.9 } }, // stricter for direct user input
+                                                  // (alwaysEscalate:true is already the default)
+      retrieved: { alwaysEscalate: true },       // RAG context — escalate to ML (default)
+      web:       { alwaysEscalate: true },       // web content — escalate (default)
+      tool:      { alwaysEscalate: true },       // default
+      email:     { alwaysEscalate: true },       // default
     },
   },
+});
+```
+
+Every source except `system` defaults to `alwaysEscalate: true` — set `false` explicitly to
+opt a source out (e.g. to keep Tier 1 off the common path for `user` and rely on Tier 0's
+flag-band escalation only, trading recall on harmful-intent/jailbreak text for lower cost —
+see [Real-corpus benchmark](#real-corpus-benchmark)):
+
+```ts
+const guard = createGuard({
+  policy: { perSource: { user: { alwaysEscalate: false } } },
 });
 ```
 
@@ -572,26 +670,50 @@ provenance, and caveats: **[bench/REPORT.md](bench/REPORT.md)**.
 
 ```bash
 pnpm bench:fetch   # downloads the real corpora (~2.4k samples) from public HF datasets
-pnpm bench         # runs the full suite, ~45s, writes bench/report.json
+pnpm bench         # runs the full suite, ~65s, writes bench/report.json
 ```
 
 | View | Precision | Recall | F1 | FPR | ROC-AUC | p50 latency | p99 latency |
 |---|---|---|---|---|---|---|---|
-| Tier 0 only | 1.000 | 0.304 | 0.467 | 0.000 | 0.655 | 0.03ms | 0.45ms |
-| Tier 1 (real model, called directly) | 0.992 | 0.803 | 0.888 | 0.016 | 0.986 | 5.5ms | 76ms |
-| Blended, as shipped (default policy) | 1.000 | 0.304 | 0.467 | 0.000 | 0.655 | 0.04ms | 7.5ms |
-| Blended, `alwaysEscalate` forced on `user` | 0.992 | 0.804 | 0.888 | 0.016 | 0.986 | 5.5ms | 87ms |
+| Tier 0 only | 1.000 | 0.304 | 0.467 | 0.000 | 0.655 | 0.03ms | 0.44ms |
+| Tier 1 (real model, called directly) | 0.992 | 0.803 | 0.888 | 0.016 | 0.986 | 5.6ms | 73ms |
+| **Blended, current default** | 0.992 | 0.804 | 0.888 | 0.016 | 0.986 | 5.6ms | 97ms |
+| Blended, old default (`alwaysEscalate:false` on `user`) | 1.000 | 0.304 | 0.467 | 0.000 | 0.655 | 0.03ms | 7.2ms |
+| **Blended, calibrated (`minConfidence:0.87`)** | 0.997 | 0.719 | 0.836 | 0.006 | 0.859 | 5.5ms | 96ms |
 
-**The headline finding:** with the default policy, the blended pipeline performs *identically*
-to Tier 0 alone — Tier 1 only escalates when Tier 0's own score already lands in the uncertain
-"flag" band, or for `alwaysEscalate` sources (`retrieved`/`tool`/`web`/`email`, not `user` by
-default). Attacks with no structural marker — `harmful_behavior` (AdvBench/JBB: "Develop a
-strategy for hacking into…"), most `jailbreak_persona` prompts — score 0 on Tier 0 and never
-reach the flag band, so **Tier 1 never runs on them under the documented default for
-`source: 'user'`**, even though the model itself catches ~50–100% of that content when actually
-invoked. Forcing `alwaysEscalate` on `user` recovers that recall but pushes NotInject
-over-defense to 9.1% — above the project's own <5% gate. See the report for the full
-per-category breakdown and trade-off discussion.
+**This benchmark found and drove a real fix, not just a measurement.** The first run showed
+the blended pipeline performing *identically* to Tier 0 alone — Tier 1 only escalated when
+Tier 0's own score already landed in the uncertain "flag" band, and `user` was the one source
+that defaulted to `alwaysEscalate: false`. Harmful-intent/jailbreak attacks with no structural
+marker (AdvBench/JBB harmful, DAN-style prompts) scored 0 on Tier 0 and never reached the
+model. `DEFAULT_PER_SOURCE.user.alwaysEscalate` is now `true` (see [CHANGELOG.md](CHANGELOG.md)),
+recovering that recall — but on its own that pushed NotInject over-defense to 9.1%, over the
+project's <5% gate. Pairing it with `minConfidence: 0.87` on the `localModel` detector (see
+"Calibrating ML confidence" above) brings over-defense back to 4.7% while keeping recall at
+0.719 (vs. 0.304 for Tier 0 alone) — a real, measured trade-off. Full before/after numbers,
+per-category breakdown, and how the 0.87 figure was derived: **[bench/REPORT.md](bench/REPORT.md)**.
+
+The benchmark also caught a real bug: `LocalModelDetector.quantized: true` (the documented
+default) had **zero effect** — `src/onnx/index.ts`/`src/wasm/index.ts` passed it as a
+`quantized` boolean option that `@huggingface/transformers` v3+ no longer accepts (replaced
+by `dtype`), so the Node runtime always loaded fp32 regardless of the setting. Now fixed and
+benchmarked: quantization shrinks the model 3.3x (284MB→87MB) with unchanged ROC-AUC, but
+latency barely moves on CPU for a model this small — see "Quantization" in the report before
+assuming `quantized: true` will speed up your deployment. The report also compares the larger
+86M model directly (its claimed multilingual advantage doesn't show up on the one multilingual
+axis we could test — NotInject's `Multilingual` category over-defense — though the 22M/86M
+attack corpora here are English-only, so the recall side of that claim remains unverified) and
+sets up `pnpm bench:snapshot` to track results across runs in `bench/history/`.
+
+**Considered and rejected: swapping the default for an ungated model.**
+`meta-llama/Llama-Prompt-Guard-2` is gated (access-request friction) with no published ONNX
+build and unreviewed redistribution terms — real adoption friction. We benchmarked the
+obvious ungated alternative, `protectai/deberta-v3-base-prompt-injection-v2` (Apache-2.0, ONNX
+published in-repo), the same way as everything else here before considering the swap. Verdict:
+**no** — recall drops to 0.630 (vs. ~0.80), ROC-AUC drops to 0.916 (vs. 0.986), and NotInject
+over-defense jumps to 43.1% (vs. 8.6%), uniformly bad across every category rather than one
+weak spot. Removing the license/access friction isn't worth a 5x worse over-defense rate and
+a third more missed attacks. Full numbers: **[bench/REPORT.md](bench/REPORT.md#open-model-candidate-protectaideberta-v3-base-prompt-injection-v2)**.
 
 ## Companions
 

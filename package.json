@@ -70,6 +70,7 @@
     "eval": "vitest run -c vitest.eval.config.ts",
     "bench:fetch": "node bench/fetch.mjs",
     "bench": "vitest run -c vitest.bench.config.ts",
+    "bench:snapshot": "node bench/snapshot.mjs",
     "ci": "biome check src && tsc --noEmit && vitest run && vitest run -c vitest.perf.config.ts && vitest run -c vitest.eval.config.ts"
   },
   "keywords": [

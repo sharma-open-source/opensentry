@@ -112,6 +112,13 @@ export interface LocalModelDetector {
   warmOnBoot?: boolean;
   timeoutMs?: number;
   runner?: LocalModelRunner; // explicit runner — skips lazy import of opensentry/onnx or opensentry/wasm
+  // Floor below which the ML score is treated as 0 before folding into the aggregate score
+  // (default 0 — no change). The global flag/block thresholds are tuned against Tier 0's
+  // structural evidence; a given model's moderate-confidence scores may not be reliable
+  // enough to clear that bar without raising over-defense (see bench/REPORT.md). Derive a
+  // value from your own corpus via bench/metrics.ts's recallAtFpr sweep — this is model- and
+  // export-specific, there is no universal default.
+  minConfidence?: number;
 }
 
 export interface RemoteGuardDetector {

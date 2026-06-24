@@ -40,7 +40,7 @@ interface TransformersModule {
   pipeline: (
     task: string,
     model: string,
-    options?: { quantized?: boolean; device?: string },
+    options?: { dtype?: string; device?: string },
   ) => Promise<TransformersPipeline>;
   env: TransformersEnv;
 }
@@ -63,8 +63,13 @@ export async function createOnnxRunner(detector: LocalModelDetector): Promise<Lo
     MODEL_IDS[detector.model ?? 'llama-prompt-guard-2-22m'] ??
     MODEL_IDS['llama-prompt-guard-2-22m']!;
 
+  // `quantized` (boolean) was a transformers.js v2 option; v3+ replaced it with `dtype` —
+  // passing the old key is silently ignored, which meant `quantized: true` (the default)
+  // never actually selected the int8 (`q8`) build and always loaded fp32 on Node. Map it
+  // to `dtype` explicitly. Requires the model repo/local export to ship a `model_quantized.onnx`
+  // (transformers.js's expected filename for `q8`) — see bench/REPORT.md for how to produce one.
   const classifier = await mod.pipeline('text-classification', modelId, {
-    quantized: detector.quantized ?? true,
+    dtype: (detector.quantized ?? true) ? 'q8' : 'fp32',
     device: 'cpu',
   });
 

@@ -40,7 +40,7 @@ interface TransformersModule {
   pipeline: (
     task: string,
     model: string,
-    options?: { quantized?: boolean; device?: string; dtype?: string },
+    options?: { device?: string; dtype?: string },
   ) => Promise<TransformersPipeline>;
   env: TransformersEnv;
 }
@@ -64,10 +64,12 @@ export async function createWasmRunner(detector: LocalModelDetector): Promise<Lo
     MODEL_IDS[detector.model ?? 'llama-prompt-guard-2-22m'] ??
     MODEL_IDS['llama-prompt-guard-2-22m']!;
 
+  // `quantized` (boolean) was a transformers.js v2 option; v3+ replaced it with `dtype` —
+  // the old key is silently ignored. Map detector.quantized to dtype explicitly instead of
+  // hardcoding 'q8' (so `quantized: false` is actually honorable on this runtime too).
   const classifier = await mod.pipeline('text-classification', modelId, {
-    quantized: detector.quantized ?? true,
     device: 'cpu',
-    dtype: 'q8', // int8 quantization for smaller WASM downloads
+    dtype: (detector.quantized ?? true) ? 'q8' : 'fp32', // q8 default for smaller WASM downloads
   });
 
   let warmed = false;
