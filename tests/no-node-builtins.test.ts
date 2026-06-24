@@ -20,6 +20,11 @@ function walk(dir: string, out: string[] = []): string[] {
 // PLAN.md §0/§5: Tier 0 core has ZERO Node builtins and runs identically on
 // Node/Deno/Bun/Workers. Enforce it statically so an accidental `node:fs` / `Buffer`
 // / `process` usage in src can never land.
+//
+// Exception: src/onnx/ is a Node-only subpath (uses onnxruntime-node for native ML).
+// It is excluded from the edge-safety check — edge users import opensentry/wasm instead.
+const EDGE_UNSAFE_DIRS = ['onnx'];
+
 const FORBIDDEN: RegExp[] = [
   /\bfrom\s+['"]node:/, // node: imports
   /\brequire\s*\(/, // CJS require
@@ -31,7 +36,12 @@ const FORBIDDEN: RegExp[] = [
 ];
 
 describe('Tier 0 core edge-safety — no Node builtins in src', () => {
-  const files = walk(srcDir);
+  const allFiles = walk(srcDir);
+  // Filter out Node-only subpaths (src/onnx/ uses onnxruntime-node).
+  const files = allFiles.filter((f) => {
+    const rel = path.relative(srcDir, f);
+    return !EDGE_UNSAFE_DIRS.some((d) => rel.startsWith(`${d}${path.sep}`));
+  });
   test('src/ contains the expected files', () => {
     expect(files.length).toBeGreaterThan(5);
   });

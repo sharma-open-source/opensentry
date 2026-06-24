@@ -10,6 +10,8 @@ export default defineConfig({
     'express/index': 'src/middleware/express.ts',
     'hono/index': 'src/middleware/hono.ts',
     'next/index': 'src/middleware/next.ts',
+    'onnx/index': 'src/onnx/index.ts',
+    'wasm/index': 'src/wasm/index.ts',
   },
   format: ['esm'],
   dts: true,

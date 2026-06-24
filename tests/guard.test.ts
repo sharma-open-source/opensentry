@@ -143,9 +143,21 @@ describe('checkSync / check tier guards', () => {
     expect(() => g.checkSync('hi')).toThrow();
   });
 
-  test('check throws a clear not-implemented error for localModel (Phase 3)', async () => {
-    const g = createGuard({ detectors: [{ kind: 'localModel' }] });
-    await expect(g.check('hi')).rejects.toThrow(/localModel/);
+  test('check with localModel + mock runner works (Phase 3)', async () => {
+    const mockRunner = {
+      loaded: true,
+      async warm() {},
+      async classify(_text: string) {
+        return { score: 0.1, label: 'benign' as const, latencyMs: 5 };
+      },
+      dispose() {},
+    };
+    const g = createGuard({
+      detectors: [{ kind: 'heuristics' }, { kind: 'localModel', runner: mockRunner }],
+    });
+    const r = await g.check('Hello, how are you?');
+    expect(r.tier).toBeGreaterThanOrEqual(0);
+    expect(typeof r.verdict).toBe('string');
   });
 
   test('check throws for remoteGuard (Phase 4)', async () => {

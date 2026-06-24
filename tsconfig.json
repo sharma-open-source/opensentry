@@ -19,7 +19,11 @@
     "verbatimModuleSyntax": true,
     "forceConsistentCasingInFileNames": true,
     "useDefineForClassFields": true,
-    "ignoreDeprecations": "6.0"
+    "ignoreDeprecations": "6.0",
+    "paths": {
+      "opensentry/onnx": ["./src/onnx/index.ts"],
+      "opensentry/wasm": ["./src/wasm/index.ts"]
+    }
   },
   "include": ["src", "corpus", "tests", "tsup.config.ts", "vitest.config.ts", "vitest.perf.config.ts", "vitest.eval.config.ts"],
   "exclude": ["dist", "node_modules"]

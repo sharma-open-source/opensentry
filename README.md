@@ -91,7 +91,21 @@ const result = guard.checkSync(userInput, {
 
 ### `guard.check(input, ctx?): Promise<GuardResult>`
 
-Full tiered pipeline. Tier 0 runs first; if configured, Tier 1 (local ML) and Tier 2 (remote guard) are invoked conditionally. Currently ships Tier 0 only — higher tiers are wired in Phase 3/4.
+Full tiered pipeline. Tier 0 runs first; if a `localModel` detector is configured, Tier 1 (local ML) is invoked conditionally — on the uncertain flag-band, on `alwaysEscalate` sources (retrieved/tool/web/email), or when `highRiskAction` is set. The ML score is folded into the aggregate via noisy-OR; the verdict is re-decided with all evidence. Tier 2 (remote guard) is planned for Phase 4.
+
+```ts
+const guard = createGuard({
+  detectors: [
+    { kind: 'heuristics' },
+    { kind: 'localModel', runtime: 'wasm', quantized: true, warmOnBoot: true },
+  ],
+});
+
+const result = await guard.check(userInput, { source: 'user' });
+// result.tier === 0  → Tier 0 only (clean or hard-block)
+// result.tier === 1  → Tier 1 ML was invoked and its score folded in
+// result.degraded    → { tier: 1, reason: 'degraded_mode' } if ML failed (circuit breaker / timeout)
+```
 
 ### `guard.checkMessages(messages): Promise<GuardResult[]>`
 
@@ -176,8 +190,11 @@ Input
   │ (optional escalation)
   ▼
 ┌──────────────────────────────────────────────────┐
-│ Tier 1 — local ML (planned)                      │
+│ Tier 1 — local ML (optional)                     │
 │  llama-prompt-guard-2-22m/86m via ONNX/WASM       │
+│  escalation gate: flag-band | alwaysEscalate |    │
+│  highRiskAction. Score folding (noisy-OR).        │
+│  Circuit breaker + timeout + degraded fallback.   │
 └──────────────────────────────────────────────────┘
   │ (optional escalation)
   ▼
@@ -214,9 +231,92 @@ Input
 
 These are marked `outOfScope` in the corpus and require ML-based semantic understanding.
 
+## Tier 1 — local ML
+
+Tier 1 adds a local ML classifier (Llama-Prompt-Guard-2-22M/86M) that catches semantic attacks regex can't — paraphrased injections, fictional framing, multilingual attacks. It's a progressive enhancement: **call sites never change**, you just add a `localModel` detector to config.
+
+### Installation
+
+Tier 1 requires `@huggingface/transformers` as an optional peer dependency:
+
+```bash
+# Node (native ONNX runtime — faster)
+pnpm add @huggingface/transformers onnxruntime-node
+
+# Edge (WASM runtime — works in Workers/Vercel Edge)
+pnpm add @huggingface/transformers
+```
+
+### Usage — Node
+
+```ts
+import { createGuard } from 'opensentry';
+
+const guard = createGuard({
+  detectors: [
+    { kind: 'heuristics' },
+    { kind: 'localModel', runtime: 'node', quantized: true, warmOnBoot: true },
+  ],
+});
+
+const result = await guard.check(userInput);
+// result.tier === 1 when ML was invoked
+// result.reasons includes { code: 'ml_classifier', weight: <malicious probability> }
+```
+
+### Usage — Edge (Cloudflare Workers, Vercel Edge, Deno)
+
+```ts
+import { createGuard } from 'opensentry';
+
+const guard = createGuard({
+  detectors: [
+    { kind: 'heuristics' },
+    { kind: 'localModel', runtime: 'wasm', quantized: true, warmOnBoot: true },
+  ],
+});
+```
+
+### How it works
+
+1. **Escalation gate** — ML fires only when needed:
+   - Tier 0 `wouldVerdict === 'flag'` (uncertain band)
+   - Source has `alwaysEscalate: true` (retrieved/tool/web/email)
+   - `highRiskAction: true` (forces escalation even on would-block)
+2. **Chunking** — inputs >512 tokens are split on sentence boundaries; chunks run in parallel; the max malicious score is taken
+3. **Score folding** — ML probability → `Reason(code='ml_classifier', category='semantic')` → re-aggregated via noisy-OR with all Tier 0 reasons → verdict re-decided. ML is one weighted signal, never replaces Tier 0 evidence
+4. **Circuit breaker** — after 5 consecutive failures, ML is short-circuited for 30s (degraded fallback). Half-open probe after cooldown
+5. **Timeout** — default 5000ms; on timeout, falls back to Tier 0 verdict + `degraded` flag
+6. **Degraded fallback** — on failure, returns Tier 0 verdict with `degraded: { tier: 1, reason: 'degraded_mode' }`. `failMode: 'closed'` escalates flag → block (can't verify safety without ML)
+
+### Custom runner
+
+For testing or custom models, pass a `LocalModelRunner` directly — no lazy import:
+
+```ts
+const guard = createGuard({
+  detectors: [
+    { kind: 'heuristics' },
+    {
+      kind: 'localModel',
+      runner: {
+        loaded: true,
+        async warm() { /* pre-load model */ },
+        async classify(text) {
+          return { score: 0.95, label: 'injection', latencyMs: 15 };
+        },
+        dispose() { /* release model */ },
+      },
+    },
+  ],
+});
+```
+
 ## Edge safety
 
 Tier 0 core has **zero Node.js dependencies**. No `node:fs`, no `Buffer`, no `process`, no `__dirname`. This is statically enforced by `tests/no-node-builtins.test.ts` — an accidental `import { readFileSync } from 'node:fs'` in `src/` will fail CI.
+
+**Exception:** `src/onnx/` is a Node-only subpath (uses `onnxruntime-node` for native ML) and is excluded from the edge-safety check. Edge users import `opensentry/wasm` instead, which uses `onnxruntime-web` (WASM SIMD).
 
 The same code runs on:
 - Node.js 18+
@@ -478,6 +578,8 @@ export async function POST(req: Request) {
 | `opensentry/express` | Express / Pages Router middleware |
 | `opensentry/hono` | Hono middleware (edge-compatible) |
 | `opensentry/next` | Next.js App Router middleware |
+| `opensentry/onnx` | Tier 1 ML — Node runtime (onnxruntime-node) |
+| `opensentry/wasm` | Tier 1 ML — edge runtime (onnxruntime-web) |
 
 ## License
 

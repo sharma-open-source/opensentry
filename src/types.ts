@@ -88,6 +88,22 @@ export interface HeuristicsDetector {
   kind: 'heuristics';
 } // Tier 0, sync, always edge-safe
 
+// PLAN.md §5 Tier 1 — local ML classifier result (Llama-Prompt-Guard-2-22M/86M).
+export interface LocalModelResult {
+  score: number; // 0..1 — probability the text is injection/malicious
+  label: 'benign' | 'injection';
+  latencyMs: number;
+}
+
+// Pluggable runner interface — implemented by opensentry/onnx (Node) and opensentry/wasm (edge).
+// Users can also provide a custom runner via LocalModelDetector.runner for testing or custom models.
+export interface LocalModelRunner {
+  readonly loaded: boolean;
+  warm(): Promise<void>; // pre-load model + warm JIT caches
+  classify(text: string): Promise<LocalModelResult>;
+  dispose(): void; // release model resources
+}
+
 export interface LocalModelDetector {
   kind: 'localModel';
   model?: 'llama-prompt-guard-2-22m' | 'llama-prompt-guard-2-86m';
@@ -95,6 +111,7 @@ export interface LocalModelDetector {
   quantized?: boolean;
   warmOnBoot?: boolean;
   timeoutMs?: number;
+  runner?: LocalModelRunner; // explicit runner — skips lazy import of opensentry/onnx or opensentry/wasm
 }
 
 export interface RemoteGuardDetector {

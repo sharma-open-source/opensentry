@@ -40,6 +40,14 @@
     "./next": {
       "types": "./dist/next/index.d.ts",
       "import": "./dist/next/index.js"
+    },
+    "./onnx": {
+      "types": "./dist/onnx/index.d.ts",
+      "import": "./dist/onnx/index.js"
+    },
+    "./wasm": {
+      "types": "./dist/wasm/index.d.ts",
+      "import": "./dist/wasm/index.js"
     }
   },
   "main": "./dist/index.js",
@@ -73,6 +81,22 @@
     "tsup": "^8.5.1",
     "typescript": "^6.0.3",
     "vitest": "^4.1.9"
+  },
+  "peerDependencies": {
+    "@huggingface/transformers": "^3.0.0",
+    "onnxruntime-node": "^1.20.0",
+    "onnxruntime-web": "^1.20.0"
+  },
+  "peerDependenciesMeta": {
+    "@huggingface/transformers": {
+      "optional": true
+    },
+    "onnxruntime-node": {
+      "optional": true
+    },
+    "onnxruntime-web": {
+      "optional": true
+    }
   },
   "pnpm": {
     "onlyBuiltDependencies": [
