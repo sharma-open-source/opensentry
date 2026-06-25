@@ -33,6 +33,10 @@ export class LRU<K, V> {
     }
   }
 
+  delete(k: K): boolean {
+    return this.m.delete(k);
+  }
+
   clear(): void {
     this.m.clear();
   }

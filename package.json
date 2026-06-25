@@ -34,6 +34,18 @@
       "types": "./dist/prompt/index.d.ts",
       "import": "./dist/prompt/index.js"
     },
+    "./canary": {
+      "types": "./dist/canary/index.d.ts",
+      "import": "./dist/canary/index.js"
+    },
+    "./taint": {
+      "types": "./dist/taint/index.d.ts",
+      "import": "./dist/taint/index.js"
+    },
+    "./session": {
+      "types": "./dist/session/index.d.ts",
+      "import": "./dist/session/index.js"
+    },
     "./express": {
       "types": "./dist/express/index.d.ts",
       "import": "./dist/express/index.js"

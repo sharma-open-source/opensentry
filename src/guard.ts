@@ -39,6 +39,42 @@ export class GuardBlockError extends Error {
 
 const DEFAULT_SOURCE: Source = 'user';
 
+// PLAN.md security plan #2 — neutralize encoded payloads in the MODEL copy. When a decoded
+// blob re-scanned as injection, either strip it or spotlight-wrap it (datamark) so it reads as
+// inert data. The MATCHING copy is never touched (R4 two-copy invariant); only `sanitized`
+// (the model copy) is rewritten. Best-effort: the blob is located by literal substring match,
+// which is exact for ASCII base64/hex (the common case). Returns the rewritten text + whether
+// any blob was neutralized.
+function neutralizeModelCopy(
+  modelCopy: string,
+  blobs: { source: string; decoded: string }[],
+  mode: 'strip' | 'spotlight',
+): { text: string; neutralized: boolean } {
+  if (blobs.length === 0) return { text: modelCopy, neutralized: false };
+  let text = modelCopy;
+  let any = false;
+  for (const { source } of blobs) {
+    if (source.length === 0) continue;
+    const positions: number[] = [];
+    let from = 0;
+    while (true) {
+      const idx = text.indexOf(source, from);
+      if (idx < 0) break;
+      positions.push(idx);
+      from = idx + source.length;
+    }
+    if (positions.length === 0) continue;
+    for (let i = positions.length - 1; i >= 0; i--) {
+      const start = positions[i] as number;
+      const end = start + source.length;
+      const replacement = mode === 'strip' ? '' : spotlight(source, { mode: 'datamark' }).text;
+      text = text.slice(0, start) + replacement + text.slice(end);
+      any = true;
+    }
+  }
+  return { text, neutralized: any };
+}
+
 // High-resolution timer via the Web-standard `performance` global (present on globalThis
 // in Node 16+, Deno, Bun, and Web Workers). Accessed through globalThis so the core has
 // zero dependency on @types/node and stays edge-portable.
@@ -92,6 +128,59 @@ async function classifyChunked(
   return {
     score: max.score,
     label: max.label,
+    latencyMs: totalLatency / results.length,
+  };
+}
+
+// SmoothLLM-style perturbation (PLAN.md security plan #7): lightly perturb the input by
+// dropping/swapping chars with probability `p`. Adversarial suffixes (GCG) are tuned to an
+// exact string and are brittle to perturbation; benign text is not. Single O(n) pass.
+function perturb(text: string, p: number): string {
+  if (text.length <= 1) return text;
+  let out = '';
+  for (let i = 0; i < text.length; i++) {
+    if (Math.random() < p) {
+      const r = Math.random();
+      if (r < 0.5) {
+        continue; // drop this char
+      } else if (i < text.length - 1) {
+        out += text.charAt(i + 1) + text.charAt(i); // swap with next
+        i++;
+        continue;
+      }
+    }
+    out += text.charAt(i);
+  }
+  return out;
+}
+
+// Run `n` lightly-perturbed copies through the classifier and take the mean score. Gated to
+// highRiskAction so the n× latency cost stays off the common path. For a classifier-evasion
+// suffix (exact→benign, perturbed→injection) the mean reveals the injection; for a brittle
+// high-on-exact signal (perturbed→benign) the mean is robust and avoids an over-flag.
+async function classifySmoothed(
+  runner: { classify(text: string): Promise<LocalModelResult> },
+  text: string,
+  timeoutMs: number,
+  smoothing: { n?: number; perturbation?: number },
+): Promise<LocalModelResult> {
+  const n = Math.max(1, smoothing.n ?? 5);
+  const p = Math.min(0.5, Math.max(0, smoothing.perturbation ?? 0.1));
+  const copies: string[] = [];
+  for (let i = 0; i < n; i++) copies.push(perturb(text, p));
+  const results = await Promise.all(copies.map((c) => classifyChunked(runner, c, timeoutMs)));
+  let sum = 0;
+  let totalLatency = 0;
+  let injectionVotes = 0;
+  for (const r of results) {
+    sum += r.score;
+    totalLatency += r.latencyMs;
+    if (r.label === 'injection' || r.score > 0.5) injectionVotes++;
+  }
+  const mean = sum / results.length;
+  return {
+    score: mean,
+    label: injectionVotes > results.length / 2 ? 'injection' : 'benign',
     latencyMs: totalLatency / results.length,
   };
 }
@@ -173,6 +262,7 @@ export function createGuard(config?: GuardConfig): Guard {
         tier: 0,
         source,
         shadow: cfg.mode === 'shadow',
+        mode: cfg.mode,
         latencyMs,
       };
       return result;
@@ -184,6 +274,36 @@ export function createGuard(config?: GuardConfig): Guard {
     const l3 = scanRegex(l1.matchingCopy);
 
     const reasons: Reason[] = [...l0.reasons, ...l1.reasons, ...l2.reasons, ...l3];
+
+    // Neutralize encoded payloads in the model copy (PLAN.md security plan #2). Default 'off'
+    // → no-op, fully backward compatible. Only fires on blobs that themselves re-scan as
+    // injection; benign base64 (images, hashes) is untouched.
+    let sanitized = l1.modelCopy;
+    let neutralized = false;
+    if (
+      cfg.normalize.neutralizeEncoded !== 'off' &&
+      l2.maliciousBlobs &&
+      l2.maliciousBlobs.length > 0
+    ) {
+      const n = neutralizeModelCopy(
+        l1.modelCopy,
+        l2.maliciousBlobs,
+        cfg.normalize.neutralizeEncoded,
+      );
+      if (n.neutralized) {
+        sanitized = n.text;
+        neutralized = true;
+        reasons.push(
+          mkReason(
+            'encoded_payload_neutralized',
+            'obfuscation',
+            0,
+            `encoded payload neutralized in model copy (mode=${cfg.normalize.neutralizeEncoded}, n=${l2.maliciousBlobs.length})`,
+          ),
+        );
+      }
+    }
+
     const score = aggregateScore(reasons);
     const decision = decideVerdict(
       score,
@@ -200,14 +320,16 @@ export function createGuard(config?: GuardConfig): Guard {
       wouldVerdict: decision.wouldVerdict,
       score,
       reasons,
-      sanitized: l1.modelCopy,
+      sanitized,
       normalized: l1.matchingCopy,
       truncated: l0.truncated,
       tier: 0,
       source,
       shadow: decision.shadow,
+      mode: decision.mode,
       latencyMs,
     };
+    if (neutralized) result.neutralized = true;
     return result;
   }
 
@@ -242,6 +364,33 @@ export function createGuard(config?: GuardConfig): Guard {
     const l2 = analyzeL2(l1.matchingCopy, l1.decodeCopy, l1.modelCopy, cfg.normalize, ctx?.locale);
     const l3 = scanRegex(l1.matchingCopy);
     const reasons: Reason[] = [...l0.reasons, ...l1.reasons, ...l2.reasons, ...l3];
+
+    let sanitized = l1.modelCopy;
+    let neutralized = false;
+    if (
+      cfg.normalize.neutralizeEncoded !== 'off' &&
+      l2.maliciousBlobs &&
+      l2.maliciousBlobs.length > 0
+    ) {
+      const n = neutralizeModelCopy(
+        l1.modelCopy,
+        l2.maliciousBlobs,
+        cfg.normalize.neutralizeEncoded,
+      );
+      if (n.neutralized) {
+        sanitized = n.text;
+        neutralized = true;
+        reasons.push(
+          mkReason(
+            'encoded_payload_neutralized',
+            'obfuscation',
+            0,
+            `encoded payload neutralized in model copy (mode=${cfg.normalize.neutralizeEncoded}, n=${l2.maliciousBlobs.length})`,
+          ),
+        );
+      }
+    }
+
     const score = aggregateScore(reasons);
     const decision = decideVerdict(
       score,
@@ -256,14 +405,16 @@ export function createGuard(config?: GuardConfig): Guard {
       wouldVerdict: decision.wouldVerdict,
       score,
       reasons,
-      sanitized: l1.modelCopy,
+      sanitized,
       normalized: l1.matchingCopy,
       truncated: l0.truncated,
       tier: 0,
       source,
       shadow: decision.shadow,
+      mode: decision.mode,
       latencyMs: nowMs() - t0,
     };
+    if (neutralized) result.neutralized = true;
     cache.set(key, result);
     emitMetric(result, ctx, false, false);
     return result;
@@ -300,6 +451,7 @@ export function createGuard(config?: GuardConfig): Guard {
       tier: failedTier,
       source: current.source,
       shadow: decision.shadow,
+      mode: decision.mode,
       latencyMs: current.latencyMs,
     };
     result.degraded = { tier: failedTier, reason: 'degraded_mode' };
@@ -360,6 +512,7 @@ export function createGuard(config?: GuardConfig): Guard {
         reasons: allReasons,
         tier: 2,
         shadow: decision.shadow,
+        mode: decision.mode,
       };
     } catch {
       if (useBreaker) remoteCircuitBreaker.recordFailure(nowMs());
@@ -391,7 +544,13 @@ export function createGuard(config?: GuardConfig): Guard {
 
     try {
       const runner = await getRunner(detector);
-      const mlResult = await classifyChunked(runner, current.sanitized, timeoutMs);
+      // SmoothLLM-style consensus (PLAN.md security plan #7): only on highRiskAction so the
+      // n× latency/FP cost stays off the common path. Adversarial suffixes are brittle to
+      // perturbation; benign text is not.
+      const mlResult =
+        detector.smoothing && isHighRisk
+          ? await classifySmoothed(runner, current.sanitized, timeoutMs, detector.smoothing)
+          : await classifyChunked(runner, current.sanitized, timeoutMs);
       mlCircuitBreaker.recordSuccess();
 
       // Score folding: ML malicious probability → Reason → re-aggregate via noisy-OR →
@@ -403,11 +562,13 @@ export function createGuard(config?: GuardConfig): Guard {
       // calibration, so sub-floor scores are reported (for audit) but contribute 0 weight.
       const minConfidence = detector.minConfidence ?? 0;
       const effectiveScore = mlResult.score < minConfidence ? 0 : mlResult.score;
+      const smoothingNote =
+        detector.smoothing && isHighRisk ? `, smoothed n=${detector.smoothing.n ?? 5}` : '';
       const mlReason: Reason = mkReason(
         'ml_classifier',
         'semantic',
         effectiveScore,
-        `ML classifier: ${mlResult.label} (p=${mlResult.score.toFixed(3)}, latency=${mlResult.latencyMs.toFixed(1)}ms)`,
+        `ML classifier: ${mlResult.label} (p=${mlResult.score.toFixed(3)}${smoothingNote}, latency=${mlResult.latencyMs.toFixed(1)}ms)`,
       );
       const allReasons = [...current.reasons, mlReason];
       const newScore = aggregateScore(allReasons);
@@ -428,6 +589,7 @@ export function createGuard(config?: GuardConfig): Guard {
           reasons: allReasons,
           tier: 1,
           shadow: decision.shadow,
+          mode: decision.mode,
         },
         escalated: true,
       };
@@ -498,6 +660,7 @@ export function createGuard(config?: GuardConfig): Guard {
           reasons: allReasons,
           tier: 2,
           shadow: decision.shadow,
+          mode: decision.mode,
         },
         escalated: true,
       };
@@ -657,7 +820,12 @@ export function createGuard(config?: GuardConfig): Guard {
     // BEFORE execution. highRiskAction is forced so the flag band fails closed (and,
     // if a remote/local tier is configured, escalates rather than passing silently).
     // The privilege model itself (what a tool is actually allowed to do) stays in your runtime.
-    async checkToolCall(call, policy) {
+    //
+    // PLAN.md security plan #3: when an opts.tracker is provided and the args contain
+    // untrusted-origin text, emit tainted_data_flow and fail closed (highRiskAction is already
+    // forced here, so the flag band escalates to block). This is policy, not a classifier →
+    // low FP. No effect unless a tracker is wired.
+    async checkToolCall(call, policy, opts) {
       if (!(call.name in policy.allow)) {
         const reason = mkReason(
           'agentic_tool_hijack',
@@ -684,13 +852,46 @@ export function createGuard(config?: GuardConfig): Guard {
           tier: 0,
           source: 'tool',
           shadow: decision.shadow,
+          mode: decision.mode,
           latencyMs: 0,
         };
         return result;
       }
 
       const argsText = typeof call.args === 'string' ? call.args : JSON.stringify(call.args ?? {});
-      return guard.check(argsText, { source: 'tool', highRiskAction: true });
+      const base = await guard.check(argsText, { source: 'tool', highRiskAction: true });
+
+      const tracker = opts?.tracker;
+      if (tracker) {
+        const match = tracker.containsTainted(argsText);
+        if (match.tainted) {
+          const taintReason = mkReason(
+            'tainted_data_flow',
+            'semantic',
+            0.9,
+            `untrusted-origin text (${match.sources.join(', ')}) reached tool "${call.name}" args`,
+          );
+          const allReasons = [...base.reasons, taintReason];
+          const newScore = aggregateScore(allReasons);
+          const decision = decideVerdict(
+            newScore,
+            allReasons,
+            cfg.thresholds,
+            cfg.hardBlockRules,
+            cfg.mode,
+            true,
+          );
+          return {
+            ...base,
+            verdict: decision.verdict,
+            wouldVerdict: decision.wouldVerdict,
+            score: newScore,
+            reasons: allReasons,
+          };
+        }
+      }
+
+      return base;
     },
   };
 

@@ -7,6 +7,11 @@ import { scanMarkers } from './l3.js';
 
 export interface L2Output {
   reasons: Reason[];
+  // Encoded blobs (base64/hex) whose decoded content re-scanned as injection → eligible for
+  // model-copy neutralization (PLAN.md security plan #2). Each entry is the exact matched blob
+  // text (case-preserved) so the caller can locate it in the model copy. Empty unless
+  // neutralization-relevant blobs were found.
+  maliciousBlobs?: { source: string; decoded: string }[];
 }
 
 const LATIN_LOCALES = new Set([
@@ -71,6 +76,238 @@ interface RescanSummary {
 // URL %xx, HTML entity). Benign prose fails both and skips the rescan entirely.
 const LOOKS_ENCODED = /(%[0-9a-fA-F]{2}|&#[x]?[0-9a-fA-F]+;|[A-Za-z0-9+/]{20,}|[0-9a-fA-F]{20,})/i;
 
+// Escape regex metacharacters in a literal token string so it can be embedded in an
+// alternation. Control tokens contain `<`, `|`, `[`, `]`, `/` etc. which are all special.
+function escapeRe(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+// Build (and cache) a case-insensitive alternation regex from the configured special-token
+// vocabulary. The matching copy is already casefolded, so tokens are lowercased too; matching
+// is still done case-insensitively to be robust to caller-provided mixed-case tokens. Returns
+// undefined when the vocabulary is empty or every entry is empty/non-matching.
+let cachedSpecialRe: { tokens: readonly string[]; re: RegExp } | undefined;
+function specialTokenRe(tokens: readonly string[]): RegExp | undefined {
+  if (tokens.length === 0) return undefined;
+  if (cachedSpecialRe && cachedSpecialRe.tokens === tokens) return cachedSpecialRe.re;
+  const parts: string[] = [];
+  for (const t of tokens) {
+    if (t.length === 0) continue;
+    parts.push(escapeRe(t.toLowerCase()));
+  }
+  if (parts.length === 0) return undefined;
+  const re = new RegExp(parts.join('|'), 'g');
+  cachedSpecialRe = { tokens, re };
+  return re;
+}
+
+// Scan the matching copy for tokenizer control/special tokens outside their legitimate
+// channel (system prompt). Control tokens have essentially zero legitimate use in untrusted
+// user data → special_token_injection. Not a hard-block (the model copy is untouched, R4);
+// weight is moderate so it raises attacker cost without an FP-driven block on benign prose
+// that happens to type `<|...|>`.
+function scanSpecialTokens(matchingCopy: string, tokens: readonly string[]): Reason[] {
+  if (matchingCopy.length === 0) return [];
+  const re = specialTokenRe(tokens);
+  if (!re) return [];
+  // Cheap pre-check: every default + typical special token starts with '<' or '['. When the
+  // input contains neither char AND every configured token starts with one of them, no token
+  // can possibly match — skip the 20-branch alternation regex entirely. This keeps the
+  // always-on Tier-0 path cheap for prose/base64/JSON inputs.
+  if (!matchingCopy.includes('<') && !matchingCopy.includes('[')) {
+    const allBracketed = tokens.every(
+      (t) => t.length > 0 && (t.charCodeAt(0) === 60 || t.charCodeAt(0) === 91),
+    );
+    if (allBracketed) return [];
+  }
+  const reasons: Reason[] = [];
+  re.lastIndex = 0;
+  let m: RegExpExecArray | null;
+  let count = 0;
+  let firstSpan: [number, number] | undefined;
+  while ((m = re.exec(matchingCopy)) !== null) {
+    count++;
+    if (!firstSpan) firstSpan = [m.index, m.index + m[0].length];
+    if (m[0].length === 0) re.lastIndex++;
+    if (count > 20) break;
+  }
+  if (count > 0) {
+    const w = clamp01(Math.min(0.95, 0.6 + 0.1 * (count - 1)));
+    reasons.push(
+      mkReason(
+        'special_token_injection',
+        'structural',
+        w,
+        `tokenizer special/control token in untrusted input (n=${count})`,
+        { span: firstSpan },
+      ),
+    );
+  }
+  return reasons;
+}
+
+// Common English letter trigrams (lowercase). Used as a tiny zero-dep frequency proxy to spot
+// "token salad" — optimizer-generated (GCG) suffixes stitch word-fragments with punctuation,
+// producing many letter trigrams that never occur in real English. KEPT SMALL on purpose: a
+// coarse improbability signal, not a language model.
+const COMMON_TRIGRAMS = new Set([
+  'the',
+  'and',
+  'ing',
+  'ion',
+  'tio',
+  'ent',
+  'ati',
+  'for',
+  'her',
+  'ter',
+  'hat',
+  'tha',
+  'ere',
+  'ain',
+  'con',
+  'nce',
+  'edt',
+  'hth',
+  'dth',
+  'ith',
+  'sth',
+  'out',
+  'our',
+  'not',
+  'was',
+  'had',
+  'his',
+  'hen',
+  'han',
+  'ave',
+  'ter',
+  'wit',
+  'ver',
+  'all',
+  'ould',
+  'unt',
+  'res',
+  'ive',
+  'are',
+  'eed',
+  'red',
+  'nce',
+  'ble',
+  'ght',
+  'est',
+  'ted',
+  'ers',
+  'pro',
+  'com',
+  'int',
+  'rso',
+  'uld',
+]);
+
+// Cheap GCG / token-salad signal (PLAN.md security plan #8). Zero-LM proxy: optimizer
+// suffixes read as garbage to humans but flip models. The signal is calibrated against benign
+// prose, code, base64, and hashes (see tests/l2.test.ts) and is deliberately conservative:
+//
+// A "salad run" is a whitespace-free run that is mostly letters, contains an embedded
+// punctuation/symbol char (NOT a pure base64/hex blob), has no base64-length alnum subrun
+// (maxAlnum < 20), and whose letter-trigrams are mostly NOT common English. GCG suffixes
+// stitch several such word-fragment-with-punctuation tokens; a single one looks like a code
+// identifier, so the signal requires >= 2 salad runs in the same input — this is what separates
+// real token-salad from a normal `import { foo } from "bar"` line.
+//
+// Weight is LOW (escalation signal only — routes to Tier 1, never blocks on its own).
+function scanAdversarialSuffix(matchingCopy: string): Reason[] {
+  const n = matchingCopy.length;
+  if (n < 24) return [];
+
+  // Two-phase, allocation-free on the common path:
+  //  Phase 1 — one cheap pass tracking whitespace-free runs and whether each has an embedded
+  //            non-alnum char. NO trigram work here (that's the expensive part).
+  //  Phase 2 — only for eligible runs (len >= 10 && has embedded punct), slice + run the
+  //            trigram/maxAlnum analysis. Benign prose (short words) and pure base64/hex
+  //            blobs (no embedded punct) never reach phase 2 → stays off the perf-critical path.
+  let saladRuns = 0;
+  let firstSaladSpan: [number, number] | undefined;
+
+  let runStart = -1;
+  let runLen = 0;
+  let hasEmbeddedPunct = false;
+
+  const analyzeRun = (start: number, len: number) => {
+    const run = matchingCopy.slice(start, start + len);
+    let letters = 0;
+    let embeddedPunct = 0;
+    let letterTri = 0;
+    let odd = 0;
+    let lr = '';
+    let maxAlnum = 0;
+    let cur = 0;
+    for (let i = 0; i < len; i++) {
+      const code = run.charCodeAt(i);
+      const isAlpha = (code >= 97 && code <= 122) || (code >= 65 && code <= 90);
+      const isAlnum = isAlpha || (code >= 48 && code <= 57);
+      if (isAlpha) {
+        letters++;
+        lr += run.charAt(i).toLowerCase();
+        if (lr.length > 3) lr = lr.slice(-3);
+        if (lr.length === 3) {
+          letterTri++;
+          if (!COMMON_TRIGRAMS.has(lr)) odd++;
+        }
+      } else {
+        lr = '';
+      }
+      if (isAlnum) {
+        cur++;
+        if (cur > maxAlnum) maxAlnum = cur;
+      } else {
+        cur = 0;
+        if (i > 0 && i < len - 1) embeddedPunct++;
+      }
+    }
+    if (embeddedPunct < 1) return;
+    const letterRatio = letters / len;
+    const oddR = letterTri > 3 ? odd / letterTri : 0;
+    if (letterRatio >= 0.6 && maxAlnum < 20 && oddR >= 0.75) {
+      saladRuns++;
+      if (!firstSaladSpan) firstSaladSpan = [start, start + len];
+    }
+  };
+
+  for (let i = 0; i <= n; i++) {
+    const code = i === n ? 32 : matchingCopy.charCodeAt(i);
+    const isSpace = code === 32 || code === 9 || code === 10 || code === 13;
+    if (isSpace) {
+      if (runStart >= 0) {
+        // Phase 2 only for runs that could possibly be salad.
+        if (runLen >= 10 && hasEmbeddedPunct) analyzeRun(runStart, runLen);
+        runStart = -1;
+        runLen = 0;
+        hasEmbeddedPunct = false;
+      }
+      continue;
+    }
+    if (runStart < 0) runStart = i;
+    runLen++;
+    const isAlnum =
+      (code >= 97 && code <= 122) || (code >= 65 && code <= 90) || (code >= 48 && code <= 57);
+    if (!isAlnum && runLen > 1) hasEmbeddedPunct = true;
+  }
+
+  if (saladRuns < 3) return [];
+
+  const w = clamp01(0.3 + 0.05 * Math.min(saladRuns - 3, 6));
+  return [
+    mkReason(
+      'adversarial_suffix',
+      'obfuscation',
+      w,
+      `possible GCG/token-salad suffix (salad runs=${saladRuns})`,
+      { span: firstSaladSpan },
+    ),
+  ];
+}
 // Normalize a decoded payload and re-run L3 detection; recurse into nested encodings
 // (bounded depth). Uses the single-pass `scanMarkers` (detection only) since decoded
 // payloads only feed the `encoded_payload` score contribution.
@@ -111,6 +348,16 @@ export function analyzeL2(
   void modelCopy; // reserved for future model-copy-based detectors
 
   const scripts = countScripts(matchingCopy);
+
+  // Special/control-token detection (PLAN.md security plan #6): tokenizer control tokens in
+  // untrusted input → special_token_injection. Scanned on the matching copy only; the model
+  // copy is untouched. Runs before the entropy gate (it is not decode-routed).
+  reasons.push(...scanSpecialTokens(matchingCopy, opts.specialTokens));
+
+  // Cheap GCG / token-salad signal (PLAN.md security plan #8): low-weight escalation signal,
+  // never blocks on its own. Opt-in (default off) so the zero-config Tier-0 hot path is
+  // unchanged; enable via normalize.scanAdversarialSuffix.
+  if (opts.scanAdversarialSuffix) reasons.push(...scanAdversarialSuffix(matchingCopy));
 
   // Mixed-script: Latin + Cyrillic/Greek (the look-alike, obfuscation-prone scripts).
   // Deliberately NOT fired for Latin+CJK/Arabic (legit bilingual) — protects R3 FPR.
@@ -166,11 +413,17 @@ export function analyzeL2(
 
   let totalMarkers = 0;
   const allCodes = new Set<ReasonCode>();
+  const maliciousBlobs: { source: string; decoded: string }[] = [];
 
   for (const cand of findAndDecode(decodeCopy)) {
     const sum = rescanOne(cand.decoded, opts, locale, opts.decodeDepth);
     totalMarkers += sum.count;
     for (const cd of sum.codes) allCodes.add(cd);
+    // A discrete blob (base64/hex) whose decoded content contained injection markers is
+    // eligible for model-copy neutralization. url/html have no discrete span (source === '').
+    if (sum.count > 0 && cand.source.length > 0) {
+      maliciousBlobs.push({ source: cand.source, decoded: cand.decoded });
+    }
   }
 
   // ROT13: decode (self-inverse) and re-scan. `decodeCopy` is already normalized and ROT13
@@ -193,5 +446,6 @@ export function analyzeL2(
     );
   }
 
+  if (maliciousBlobs.length > 0) return { reasons, maliciousBlobs };
   return { reasons };
 }

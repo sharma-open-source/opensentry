@@ -113,6 +113,8 @@ function isMostlyPrintable(s: string): boolean {
 export interface DecodedCandidate {
   kind: 'base64' | 'hex' | 'url' | 'html';
   decoded: string;
+  source: string; // the exact matched blob text in the input (case-preserved)
+  span: [number, number]; // offsets of `source` in the scanned text
 }
 
 const B64_RE = /\b[A-Za-z0-9+/]{20,}={0,2}\b/g;
@@ -141,6 +143,8 @@ function maxAlnumRun(s: string): number {
 
 // Find encoded blobs in `text` (the matching copy) and return decoded candidates that
 // look like real text. ROT13 is handled by the caller (whole-text transform + rescan).
+// `source`/`span` are populated for discrete, span-localized blobs (base64/hex) so callers
+// can neutralize them in the model copy; url/html are whole-text transforms (no discrete span).
 export function findAndDecode(text: string): DecodedCandidate[] {
   const out: DecodedCandidate[] = [];
   if (text.length === 0) return out;
@@ -149,9 +153,17 @@ export function findAndDecode(text: string): DecodedCandidate[] {
   if (maxAlnumRun(text) >= 20) {
     B64_RE.lastIndex = 0;
     while ((m = B64_RE.exec(text)) !== null) {
-      const dec = decodeBase64(m[0] as string);
-      if (dec !== null && isMostlyPrintable(dec)) out.push({ kind: 'base64', decoded: dec });
-      if (m[0].length === 0) B64_RE.lastIndex++;
+      const blob = m[0] as string;
+      const dec = decodeBase64(blob);
+      if (dec !== null && isMostlyPrintable(dec)) {
+        out.push({
+          kind: 'base64',
+          decoded: dec,
+          source: blob,
+          span: [m.index, m.index + blob.length],
+        });
+      }
+      if (blob.length === 0) B64_RE.lastIndex++;
     }
 
     HEX_RE.lastIndex = 0;
@@ -159,7 +171,14 @@ export function findAndDecode(text: string): DecodedCandidate[] {
       const blob = m[0] as string;
       if (blob.length % 2 === 0) {
         const dec = decodeHex(blob);
-        if (dec !== null && isMostlyPrintable(dec)) out.push({ kind: 'hex', decoded: dec });
+        if (dec !== null && isMostlyPrintable(dec)) {
+          out.push({
+            kind: 'hex',
+            decoded: dec,
+            source: blob,
+            span: [m.index, m.index + blob.length],
+          });
+        }
       }
       if (blob.length === 0) HEX_RE.lastIndex++;
     }
@@ -167,12 +186,12 @@ export function findAndDecode(text: string): DecodedCandidate[] {
 
   if (URL_RE.test(text)) {
     const dec = decodeUrl(text);
-    if (dec !== text) out.push({ kind: 'url', decoded: dec });
+    if (dec !== text) out.push({ kind: 'url', decoded: dec, source: '', span: [0, 0] });
   }
 
   if (ENT_RE.test(text)) {
     const dec = decodeHtmlEntities(text);
-    if (dec !== text) out.push({ kind: 'html', decoded: dec });
+    if (dec !== text) out.push({ kind: 'html', decoded: dec, source: '', span: [0, 0] });
   }
 
   return out;

@@ -14,9 +14,12 @@ export type ReasonCode =
   | 'confusable_run'
   | 'script_mixing'
   | 'encoded_payload'
+  | 'encoded_payload_neutralized'
   | 'entropy_anomaly'
+  | 'adversarial_suffix'
   | 'role_tag_spoof'
   | 'template_forgery'
+  | 'special_token_injection'
   | 'instruction_override'
   | 'policy_puppetry'
   | 'exfil_markdown_image'
@@ -28,7 +31,14 @@ export type ReasonCode =
   | 'ml_classifier'
   | 'remote_guard'
   | 'embedding_match'
-  | 'degraded_mode';
+  | 'degraded_mode'
+  | 'session_escalation'
+  | 'manyshot_density'
+  | 'cumulative_risk'
+  | 'tainted_data_flow'
+  | 'canary_leak'
+  | 'secret_egress'
+  | 'pii_egress';
 
 export type ReasonCategory = 'obfuscation' | 'structural' | 'semantic' | 'exfil' | 'resource';
 
@@ -52,7 +62,9 @@ export interface GuardResult {
   tier: Tier; // highest tier that actually executed
   source: Source;
   shadow: boolean; // true => verdict was NOT enforced
+  mode?: Mode; // the guard's resolved mode ('shadow'|'soft'|'enforce'); lets wrappers (session guard) re-decide without collapsing soft→enforce
   degraded?: { tier: Tier; reason: ReasonCode }; // a tier failed open — surfaced, never silent
+  neutralized?: boolean; // an encoded payload in the model copy was stripped/spotlighted
   latencyMs: number;
 }
 
@@ -119,6 +131,11 @@ export interface LocalModelDetector {
   // value from your own corpus via bench/metrics.ts's recallAtFpr sweep — this is model- and
   // export-specific, there is no universal default.
   minConfidence?: number;
+  // SmoothLLM-style consensus (PLAN.md robustness hardening): when highRiskAction is set,
+  // run `n` lightly-perturbed copies through the classifier and take the majority/mean.
+  // Adversarial suffixes (GCG) are brittle to perturbation; benign text is not. Stays off
+  // the common (non-high-risk) path. Default off.
+  smoothing?: { n?: number; perturbation?: number };
 }
 
 export interface RemoteGuardDetector {
@@ -183,6 +200,9 @@ export interface GuardConfig {
     decodeDepth?: number; // default 2
     maxScanBytes?: number; // default 65536, truncate-with-flag
     rtlLocales?: string[];
+    neutralizeEncoded?: 'off' | 'strip' | 'spotlight'; // neutralize the MODEL copy when a decoded blob re-scans as malicious; default 'off'
+    specialTokens?: string[]; // tokenizer control tokens scanned on the matching copy → special_token_injection
+    scanAdversarialSuffix?: boolean; // enable the cheap GCG/token-salad L2 signal (adversarial_suffix); default false (off the Tier-0 hot path)
   };
   // Detectors are pluggable + lazily loaded from subpath exports.
   detectors?: Detector[]; // default [{ kind: 'heuristics' }]
@@ -225,8 +245,18 @@ export interface Guard {
 
   // Tool-call guard (least-privilege assist): scan args through the pipeline + enforce an
   // allowlist of tools/arg-shapes BEFORE execution. (Phase 4)
+  // The optional `opts.tracker` (opensentry/taint) emits `tainted_data_flow` and fails closed
+  // when untrusted-origin text reaches a privileged tool call (PLAN.md security plan #3).
   checkToolCall(
     call: { name: string; args: unknown },
     policy: { allow: Record<string, unknown> },
+    opts?: { tracker?: TaintTrackerLike },
   ): Promise<GuardResult>;
+}
+
+// Structural shape of a TaintTracker (from opensentry/taint) re-declared here so the core
+// Guard interface can reference it WITHOUT a runtime import (type-only). keeps the core
+// edge-safe and avoids a circular subpath dependency.
+export interface TaintTrackerLike {
+  containsTainted(text: string): { tainted: boolean; sources: Source[]; marks: unknown[] };
 }

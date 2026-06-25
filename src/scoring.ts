@@ -18,6 +18,7 @@ export interface VerdictDecision {
   verdict: Verdict; // enforced (respects shadow/soft)
   wouldVerdict: Verdict; // before shadow override
   shadow: boolean;
+  mode: Mode; // resolved mode — lets callers re-decide without re-deriving it
   hardBlockTriggered: boolean;
 }
 
@@ -64,5 +65,5 @@ export function decideVerdict(
     verdict = wouldVerdict;
   }
 
-  return { verdict, wouldVerdict, shadow, hardBlockTriggered };
+  return { verdict, wouldVerdict, shadow, mode, hardBlockTriggered };
 }

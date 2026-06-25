@@ -45,6 +45,34 @@ export const DEFAULT_PER_SOURCE: Partial<Record<Source, PerSourcePolicy>> = {
 
 export const UNTRUSTED_SOURCES: readonly Source[] = ['retrieved', 'tool', 'web', 'email'];
 
+// Common chat-template / control tokens across Llama/Qwen/GPT/Mistral/Gemma families.
+// Scanned on the MATCHING copy only → special_token_injection. Control tokens have
+// essentially zero legitimate use in untrusted user data; the model copy is untouched
+// (R4 two-copy invariant). Only FULL, unambiguous tokens are listed — no partial prefixes
+// or model names that risk flagging benign mentions.
+export const DEFAULT_SPECIAL_TOKENS: readonly string[] = [
+  '<|im_start|>',
+  '<|im_end|>',
+  '<|endofprompt|>',
+  '<|begin_of_text|>',
+  '<|end_of_text|>',
+  '<|start_header_id|>',
+  '<|end_header_id|>',
+  '<|eot_id|>',
+  '<|eom_id|>',
+  '[INST]',
+  '[/INST]',
+  '<<SYS>>',
+  '<</SYS>>',
+  '<start_of_turn>',
+  '<end_of_turn>',
+  '<|tool|>',
+  '<|resource|>',
+  '<|assistant|>',
+  '<|system|>',
+  '<|user|>',
+];
+
 export const DEFAULT_RTL_LOCALES: readonly string[] = [
   'ar',
   'arc',
@@ -72,6 +100,9 @@ export interface ResolvedNormalize {
   decodeDepth: number;
   maxScanBytes: number;
   rtlLocales: readonly string[];
+  neutralizeEncoded: 'off' | 'strip' | 'spotlight';
+  specialTokens: readonly string[];
+  scanAdversarialSuffix: boolean;
 }
 
 export interface ResolvedConfig {
@@ -110,6 +141,9 @@ export function resolveConfig(config?: GuardConfig): ResolvedConfig {
       decodeDepth: n.decodeDepth ?? DEFAULT_DECODE_DEPTH,
       maxScanBytes: n.maxScanBytes ?? DEFAULT_MAX_SCAN_BYTES,
       rtlLocales: n.rtlLocales ?? DEFAULT_RTL_LOCALES,
+      neutralizeEncoded: n.neutralizeEncoded ?? 'off',
+      specialTokens: n.specialTokens ?? DEFAULT_SPECIAL_TOKENS,
+      scanAdversarialSuffix: n.scanAdversarialSuffix ?? false,
     },
     detectors: config?.detectors ?? [{ kind: 'heuristics' }],
     cacheMax: config?.cache?.max ?? 1024,

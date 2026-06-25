@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+### Added — security hardening (from `SECURITY_FEATURES_PLAN.md`)
+
+The gaps a stateless single-message filter structurally cannot see. **Every item ships default-off or behind a new subpath — the zero-config Tier-0 path, the CI gates (benign FPR < 1%, NotInject < 5%, attack recall ≥ 90%, hard-block 100%, Tier 0 p99 < 1ms), and the eval corpora are all unchanged.** 257 unit tests (+66), perf SLA and eval gates still green.
+
+- **`opensentry/session` — stateful multi-turn guard.** `createSessionGuard(guard, opts?)` wraps a `Guard` with per-`conversationId` LRU state + a pluggable `SessionStore` (BYO for Redis/DB). Folds three session-level signals into each turn via noisy-OR: `cumulative_risk` (decaying sum), `session_escalation` (Crescendo score gradient), `manyshot_density` (many synthetic role-pairs in one turn). Flag-weighted + decaying; can only escalate, never de-escalate. Catches Crescendo / Bad Likert Judge / many-shot, which exceed ~70% success because no single turn is flaggable.
+- **`opensentry/taint` — provenance tracking for indirect injection.** `createTaintTracker()` is an explicit provenance-passing API (honest heuristic, not magic taint propagation). Wired into `guard.checkToolCall(call, policy, { tracker })`: untrusted-origin text (retrieved/tool/web/email) reaching a privileged tool call emits `tainted_data_flow` and fails closed. Low-FP because it flags *data flow into privileged actions*, not content. `checkToolCall` now accepts an optional third `opts` arg.
+- **`opensentry/canary` — canary tokens for system-prompt-leak detection.** `createCanary` / `injectCanary` / `detectCanaryLeak`; 128-bit nonce, near-zero-FP deterministic detection. `assemble({ canary })` auto-injects into the system prompt. A hit maps to `canary_leak` (hard-block) — a confirmed extraction, not a heuristic guess.
+- **Neutralize encoded payloads** — `normalize.neutralizeEncoded: 'strip' | 'spotlight'` (default `'off'`). Closes the detect→model gap: when a decoded blob re-scans as injection, the MODEL copy (`result.sanitized`) is rewritten — `strip` removes the blob, `spotlight` datamarks it as inert data. R4 two-copy invariant preserved (only the model copy is touched, and only to *remove* an attack payload). Benign base64 (images, hashes) is untouched. New `GuardResult.neutralized` + `encoded_payload_neutralized` reason.
+- **Secret/PII egress scanning** — `EgressPolicy.scanSecrets` (known key shapes: OpenAI/GitHub/AWS/JWT/Slack/Google + high-entropy token runs → `secret_egress`) and `EgressPolicy.scanPii` (email/phone/card-Luhn/SSN or BYO `RegExp[]` → `pii_egress`). Flag-not-block (output-side, blocking a response is costly); `scanPii` defaults off (locale-sensitive). `secretAllowlist` for known-safe tokens. URL exfil stays hard-block.
+- **Special-token detection** — `normalize.specialTokens` (default Llama/Qwen/GPT/Mistral/Gemma control-token list) → `special_token_injection` on the matching copy. Control tokens have essentially zero legitimate use in untrusted user data. A cheap `<`/`[` pre-check keeps the always-on Tier-0 path fast.
+- **SmoothLLM consensus** — `LocalModelDetector.smoothing: { n, perturbation }` runs `n` lightly-perturbed copies through the classifier on `highRiskAction` only and takes the mean. Adversarial suffixes (GCG) are brittle to perturbation; benign text is not. n× latency cost stays off the common path.
+- **GCG / token-salad signal** — `normalize.scanAdversarialSuffix` (opt-in, default off) → low-weight `adversarial_suffix`. A zero-LM proxy calibrated to **0 benign FP** on code/base64/hashes/JSON; escalation signal only (routes to Tier 1, never blocks on its own).
+
+### New `ReasonCode`s
+
+`session_escalation`, `manyshot_density`, `cumulative_risk`, `encoded_payload_neutralized`, `tainted_data_flow`, `canary_leak`, `secret_egress`, `pii_egress`, `special_token_injection`, `adversarial_suffix`.
+
+### New subpath exports
+
+`opensentry/canary`, `opensentry/taint`, `opensentry/session` (built via tsup as separate self-contained ESM bundles; all edge-safe — verified by `tests/no-node-builtins.test.ts`).
+
 ### Changed — breaking default behavior
 
 - **`user` source now defaults to `alwaysEscalate: true`** (was `false`), matching every

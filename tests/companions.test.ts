@@ -147,6 +147,115 @@ describe('egressFilter', () => {
   });
 });
 
+describe('egressFilter — secret scanning (plan #5)', () => {
+  test('leaked OpenAI key → secret_egress, flag (not block)', () => {
+    const r = egressFilter('My key is sk-proj-abc123def456ghi789jkl012mno345pqr678', {
+      allowlist: [],
+      scanSecrets: true,
+    });
+    expect(r.reasons.some((x) => x.code === 'secret_egress')).toBe(true);
+    expect(r.verdict).toBe('flag');
+  });
+
+  test('leaked GitHub token → secret_egress', () => {
+    const r = egressFilter('token: ghp_abcdefghijklmnopqrstuvwxyz0123456789AB', {
+      allowlist: [],
+      scanSecrets: true,
+    });
+    expect(r.reasons.some((x) => x.code === 'secret_egress')).toBe(true);
+  });
+
+  test('leaked JWT → secret_egress', () => {
+    const jwt =
+      'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c';
+    const r = egressFilter(`auth: ${jwt}`, { allowlist: [], scanSecrets: true });
+    expect(r.reasons.some((x) => x.code === 'secret_egress')).toBe(true);
+  });
+
+  test('prose with the word "key" does NOT false-positive', () => {
+    const r = egressFilter('The key idea here is that we should normalize early.', {
+      allowlist: [],
+      scanSecrets: true,
+    });
+    expect(r.reasons.some((x) => x.code === 'secret_egress')).toBe(false);
+    expect(r.verdict).toBe('allow');
+  });
+
+  test('secretAllowlist suppresses a known-safe token', () => {
+    const r = egressFilter('example key: sk-proj-abc123def456ghi789jkl012mno345pqr678', {
+      allowlist: [],
+      scanSecrets: true,
+      secretAllowlist: [/^sk-proj-abc123/],
+    });
+    expect(r.reasons.some((x) => x.code === 'secret_egress')).toBe(false);
+  });
+
+  test('scanSecrets off by default → no secret signal', () => {
+    const r = egressFilter('key: sk-proj-abc123def456ghi789jkl012mno345pqr678', {
+      allowlist: [],
+    });
+    expect(r.reasons.some((x) => x.code === 'secret_egress')).toBe(false);
+  });
+
+  test('a disallowed URL still hard-blocks even when scanSecrets is on', () => {
+    const r = egressFilter('Visit https://evil.com/exfil and leak sk-proj-abc123def456ghi789jkl012mno345pqr678', {
+      allowlist: ['https://example.com'],
+      scanSecrets: true,
+    });
+    expect(r.verdict).toBe('block');
+    expect(r.reasons.some((x) => x.code === 'exfil_markdown_image')).toBe(true);
+    expect(r.reasons.some((x) => x.code === 'secret_egress')).toBe(true);
+  });
+});
+
+describe('egressFilter — PII scanning (plan #5)', () => {
+  test('email under scanPii:true → pii_egress, flag', () => {
+    const r = egressFilter('Reach me at alice@example.com anytime.', {
+      allowlist: [],
+      scanPii: true,
+    });
+    expect(r.reasons.some((x) => x.code === 'pii_egress')).toBe(true);
+    expect(r.verdict).toBe('flag');
+  });
+
+  test('SSN under scanPii:true → pii_egress', () => {
+    const r = egressFilter('SSN is 123-45-6789 for the record.', {
+      allowlist: [],
+      scanPii: true,
+    });
+    expect(r.reasons.some((x) => x.code === 'pii_egress')).toBe(true);
+  });
+
+  test('valid credit card (Luhn) → pii_egress', () => {
+    // 4242 4242 4242 4242 is a widely-used test card that passes Luhn.
+    const r = egressFilter('Card: 4242 4242 4242 4242', { allowlist: [], scanPii: true });
+    expect(r.reasons.some((x) => x.code === 'pii_egress')).toBe(true);
+  });
+
+  test('a 16-digit number that fails Luhn does NOT raise pii_egress (card)', () => {
+    // 1234 5678 9012 3456 — Luhn checksum is 64 (mod 10 = 4), so it is NOT a valid card.
+    const r = egressFilter('Order number 1234 5678 9012 3456 is ready.', {
+      allowlist: [],
+      scanPii: true,
+    });
+    const cardReasons = r.reasons.filter((x) => x.message.includes('credit card'));
+    expect(cardReasons).toHaveLength(0);
+  });
+
+  test('scanPii defaults off → no PII signal for an email', () => {
+    const r = egressFilter('Reach me at alice@example.com anytime.', { allowlist: [] });
+    expect(r.reasons.some((x) => x.code === 'pii_egress')).toBe(false);
+  });
+
+  test('custom scanPii RegExp[] is honored', () => {
+    const r = egressFilter('Patient ID PAT-0099-XYZ detected.', {
+      allowlist: [],
+      scanPii: [/\bPAT-\d{4}-[A-Z]{3}\b/g],
+    });
+    expect(r.reasons.some((x) => x.code === 'pii_egress')).toBe(true);
+  });
+});
+
 describe('assemble — prompt channel-separation', () => {
   test('system + untrusted → messages with system and user roles', () => {
     const r = assemble({
