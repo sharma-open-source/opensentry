@@ -417,7 +417,7 @@ weights) — see `bench/REPORT.md`'s 86M section for the full numbers before dec
 
 ## Tier 2 — remote guard / LLM-as-judge
 
-Tier 2 escalates to an external guard model or LLM-as-judge for the highest semantic ceiling — reserved for content still borderline after Tier 1 (or after Tier 0 if no Tier 1 is configured), or for gating a `highRiskAction` (pre-tool-call / pre-egress). **Never synchronous on the common path.** Aegis/opensentry ships **no vendor SDKs** in core — you supply a `RemoteGuardProvider` (and therefore decide if/when anything leaves the process).
+Tier 2 escalates to an external guard model or LLM-as-judge for the highest semantic ceiling — reserved for content still borderline after Tier 1 (or after Tier 0 if no Tier 1 is configured), or for gating a `highRiskAction` (pre-tool-call / pre-egress). **Never synchronous on the common path.** opensentry/opensentry ships **no vendor SDKs** in core — you supply a `RemoteGuardProvider` (and therefore decide if/when anything leaves the process).
 
 ```ts
 import { createGuard } from 'opensentry';

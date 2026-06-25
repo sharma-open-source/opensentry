@@ -1,8 +1,8 @@
-# Aegis — Prompt-Injection Validation Layer
+# opensentry — Prompt-Injection Validation Layer
 
 > **Status:** Plan / pre-implementation. This document is the agreed design before any code is written.
 > **Language:** TypeScript (pure ESM, Node + edge).
-> **Working name:** `Aegis` / `@aegis/guard` (placeholder — rename freely).
+> **Working name:** `opensentry` / `@opensentry/guard` (placeholder — rename freely).
 
 ---
 
@@ -10,9 +10,9 @@
 
 | Question | Decision | Consequence for the build |
 |---|---|---|
-| **Deployment surface** | **Both Node + edge/Workers, co-equal** | Core (Tier 0) has **zero Node builtins** and runs identically on Node/Deno/Bun/Workers. Tier 1 ships two runtimes as first-class peers — `@aegis/guard/onnx` (Node, `onnxruntime-node`) and `@aegis/guard/wasm` (edge, `transformers.js`/`onnxruntime-web`). CI runs the suite on **both** runtimes. |
+| **Deployment surface** | **Both Node + edge/Workers, co-equal** | Core (Tier 0) has **zero Node builtins** and runs identically on Node/Deno/Bun/Workers. Tier 1 ships two runtimes as first-class peers — `@opensentry/guard/onnx` (Node, `onnxruntime-node`) and `@opensentry/guard/wasm` (edge, `transformers.js`/`onnxruntime-web`). CI runs the suite on **both** runtimes. |
 | **Use case** | **One common package for ALL LLM use cases — agentic included** | Provider/framework-agnostic by construction. **Agentic support is first-class, not optional:** full `Source` taxonomy (`system/user/retrieved/tool/web/email`), `highRiskAction` pre-tool-call gating, and **output + tool-arg scanning reuse the exact same pipeline** (`createStreamScanner` on egress). Companion controls (spotlighting, egress allowlist, channel separation) shipped as documented helper utilities. Core stays tiny; ML/remote are opt-in subpaths so the shared dependency never bloats consumers that only want Tier 0. |
-| **Remote tier (Tier 2)** | **Optional, user-configurable via an interface (BYO-provider)** | We do **not** bundle vendor SDKs. Aegis ships a `RemoteGuardProvider` interface (§6) + a couple of thin reference adapters; the user supplies the provider (and `fetch`) and decides whether to enable it. **Zero remote egress unless explicitly wired.** Everything works fully in-process with Tier 0 (+ optional local ML). |
+| **Remote tier (Tier 2)** | **Optional, user-configurable via an interface (BYO-provider)** | We do **not** bundle vendor SDKs. opensentry ships a `RemoteGuardProvider` interface (§6) + a couple of thin reference adapters; the user supplies the provider (and `fetch`) and decides whether to enable it. **Zero remote egress unless explicitly wired.** Everything works fully in-process with Tier 0 (+ optional local ML). |
 | **Latency + FPR budgets** | **Best-practice defaults, set below** | **Tier 0 p99 < 1 ms** (CI-enforced hard SLA). **Blended inline p99 < 100 ms** with escalation on. **Benign FPR gate < 1%** as a release blocker; over-defense on NotInject tracked separately (target < 5%). Default thresholds favor precision — **flag 0.4 / block 0.85**, chosen by recall@FPR on PR/ROC sweeps, never a naive 0.5. |
 
 **Carried-over defaults for the questions not explicitly answered (§14 has the rationale):**
@@ -43,7 +43,7 @@ a way that silently degrades product quality.
 
 ### Goals (from the brief), and how the design meets each
 
-| Your requirement | How Aegis delivers it |
+| Your requirement | How opensentry delivers it |
 |---|---|
 | **Effective, not just known-pattern regex** | Regex is only one of four Tier-0 layers. The load-bearing layer is **normalization** (Unicode NFKC, invisible/tag/bidi stripping, homoglyph folding, decode-and-rescan) so obfuscated attacks are *unmasked before any matching*. A semantic **ML classifier** and optional **remote guard model** catch paraphrased/novel attacks regex can't. |
 | **Scale to modern hacks** | Threat model in §3 covers 20 attack families incl. invisible-Unicode smuggling, GCG suffixes, many-shot, Crescendo multi-turn, agentic tool-hijack, ArtPrompt, Policy Puppetry. Corpus + classifier are versioned and updatable as new variants ship. |
@@ -67,7 +67,7 @@ low-weighted*, and never the core of the design:
 - GCG adversarial suffixes — machine-generated token salad, no human-readable keyword.
 
 **The fix is architectural:** *normalize the input into a canonical form first, then score it with
-multiple independent detectors, then escalate semantically when uncertain.* That is Aegis.
+multiple independent detectors, then escalate semantically when uncertain.* That is opensentry.
 
 ---
 
@@ -104,7 +104,7 @@ alone fails. The **Primary defense** column maps each family to the layer that c
 - Invisible-Unicode tag/variation-selector smuggling moved from theory to **real 2024–2026 exploits** against Cursor, GitHub Copilot, and claude.ai.
 - Multi-turn attacks exceed **~70% success** vs single-turn-hardened models → per-message filtering is structurally insufficient (hence §10).
 - Skeleton Key, transferable GCG suffixes (AmpleGCG), and many-shot all defeat naive matching.
-- Industry consensus is shifting from input blocklists toward **architectural controls** — which is exactly why Aegis is explicitly positioned as one layer among the §11 companions.
+- Industry consensus is shifting from input blocklists toward **architectural controls** — which is exactly why opensentry is explicitly positioned as one layer among the §11 companions.
 
 ---
 
@@ -167,11 +167,11 @@ alone fails. The **Primary defense** column maps each family to the layer that c
 ### Tier 2 — remote guard / LLM-as-judge (lazy, escalation + async audit)
 
 - **What:** highest semantic ceiling, best-maintained (retrained vs new jailbreaks/CVEs, multilingual, multi-category). Reserved for borderline-after-Tier-1, **gating before a high-risk action** (tool call / egress), or **fully-async audit**. **Never synchronous in the hot path.**
-- **Providers (opt-in, BYO via `RemoteGuardProvider`):** the user implements/passes the provider — Aegis bundles **no** vendor SDKs. Examples you can wrap with a few-line adapter: Prompt-Guard-2 / Llama-Guard on Groq/Together/Bedrock, Azure Prompt Shields, AWS Bedrock Guardrails, Lakera, or an LLM-as-judge prompt. Disabled (zero egress) unless wired.
+- **Providers (opt-in, BYO via `RemoteGuardProvider`):** the user implements/passes the provider — opensentry bundles **no** vendor SDKs. Examples you can wrap with a few-line adapter: Prompt-Guard-2 / Llama-Guard on Groq/Together/Bedrock, Azure Prompt Shields, AWS Bedrock Guardrails, Lakera, or an LLM-as-judge prompt. Disabled (zero egress) unless wired.
 - **Latency:** network p50 80–300ms / p99 300ms–1.5s+; strict 300–800ms timeout + circuit breaker.
 - **Caveat:** the judge is itself injectable and nondeterministic ⇒ its output is **one weighted signal, never an unconditional block**; untrusted content sent to it is spotlight-delimited.
 
-### Structural defenses Aegis *enables* (cheap, deterministic, high-impact)
+### Structural defenses opensentry *enables* (cheap, deterministic, high-impact)
 
 Microsoft Spotlighting (arXiv 2403.14720) reports ASR dropping from **>50% to <3%** with these — they live at prompt-construction time, and the validator's job is to guarantee the input can't forge them:
 
@@ -187,7 +187,7 @@ Zero-config gives you the sub-ms Tier-0 guard. Everything else is progressive en
 **call sites never change** when you add ML or remote tiers.
 
 ```ts
-// ============ @aegis/guard  (core · pure-ESM · zero deps · Node + edge identical) ============
+// ============ @opensentry/guard  (core · pure-ESM · zero deps · Node + edge identical) ============
 
 export type Verdict = 'allow' | 'flag' | 'block';
 export type Tier    = 0 | 1 | 2;                         // 0=sync heuristics, 1=local ML, 2=remote
@@ -236,7 +236,7 @@ export interface GuardContext {
 
 export interface Thresholds { flag: number; block: number; }   // default { flag: 0.4, block: 0.85 }
 
-// ---- Tier 2 is BYO-provider. Aegis ships this interface + thin reference adapters; YOU decide
+// ---- Tier 2 is BYO-provider. opensentry ships this interface + thin reference adapters; YOU decide
 //      if/when to enable it. Nothing is sent off-box unless you pass a provider here. ----
 export interface RemoteGuardProvider {
   name: string;
@@ -340,22 +340,22 @@ const guard = createGuard({
 ### Package layout (subpath exports keep edge bundles lean)
 
 ```
-@aegis/guard              -> core: normalization + heuristics (Tier 0), zero deps, no Node builtins
-@aegis/guard/onnx         -> Node Tier 1 (onnxruntime-node)
-@aegis/guard/wasm         -> edge Tier 1 (onnxruntime-web / transformers.js)
-@aegis/guard/remote       -> Tier 2 reference adapters (optional, BYO-provider — no vendor SDKs in core)
-@aegis/guard/confusables  -> optional UTS-39 confusables table (lazy)
-@aegis/guard/spotlight    -> companion: delimit / datamark / encode untrusted content (§11a)
-@aegis/guard/egress       -> companion: outbound URL allowlist / exfil filter (§11a)
-@aegis/guard/prompt       -> companion: typed channel-separation prompt assembler (§11a)
-@aegis/guard/express  ·  /hono  ·  /next   -> framework middleware
+@opensentry/guard              -> core: normalization + heuristics (Tier 0), zero deps, no Node builtins
+@opensentry/guard/onnx         -> Node Tier 1 (onnxruntime-node)
+@opensentry/guard/wasm         -> edge Tier 1 (onnxruntime-web / transformers.js)
+@opensentry/guard/remote       -> Tier 2 reference adapters (optional, BYO-provider — no vendor SDKs in core)
+@opensentry/guard/confusables  -> optional UTS-39 confusables table (lazy)
+@opensentry/guard/spotlight    -> companion: delimit / datamark / encode untrusted content (§11a)
+@opensentry/guard/egress       -> companion: outbound URL allowlist / exfil filter (§11a)
+@opensentry/guard/prompt       -> companion: typed channel-separation prompt assembler (§11a)
+@opensentry/guard/express  ·  /hono  ·  /next   -> framework middleware
 ```
 
 ---
 
 ## 7. Quality preservation — how we guarantee we don't hurt the product
 
-This is the requirement most input filters get wrong. Aegis treats benign quality as a release-blocking objective:
+This is the requirement most input filters get wrong. opensentry treats benign quality as a release-blocking objective:
 
 1. **Flag, don't block, in the uncertain band.** Scores in `[flag, block)` pass the **sanitized** text through and log — the user is never walled off.
 2. **Pass sanitized text, don't reject.** Even when we detect obfuscation, the default is to strip the invisible/dangerous chars and continue, not to bounce the request.
@@ -409,16 +409,16 @@ Stated up front so there are no surprises:
 
 - **Multi-turn / many-shot attacks (Crescendo, Bad Likert Judge).** No single message is flaggable; these exceed ~70% success vs single-turn-hardened models. `checkMessages` + `conversationId` give *partial* conversation context, but real coverage needs **session-level state tracking** — a separate component beyond v1's per-message validator.
 - **GCG adversarial suffixes are only partially covered** via entropy-routing to Tier 1. We deliberately exclude perplexity scoring from the hot path (needs an LM, high latency, blind to fluent paraphrase), so optimizer-generated attacks lean on Tier-1 recall, not a dedicated detector.
-- **Agentic tool-call hijacking** is the highest-severity real-world path. Aegis provides the `highRiskAction` pre-tool-call gating hook and output-side scanning, but actual safety requires the §11 companion controls (least-privilege tools, egress allowlisting, human approval) which live in the agent runtime, not this validator.
+- **Agentic tool-call hijacking** is the highest-severity real-world path. opensentry provides the `highRiskAction` pre-tool-call gating hook and output-side scanning, but actual safety requires the §11 companion controls (least-privilege tools, egress allowlisting, human approval) which live in the agent runtime, not this validator.
 
 ---
 
 ## 11. Mandatory companion controls (defense-in-depth)
 
-Aegis is **one layer.** Per OWASP LLM01:2025, ship it alongside:
+opensentry is **one layer.** Per OWASP LLM01:2025, ship it alongside:
 
 1. **Typed trusted/untrusted channel separation** — structured roles, never string concatenation.
-2. **Spotlighting** — delimiting + datamarking (Aegis enforces the input can't forge the markers).
+2. **Spotlighting** — delimiting + datamarking (opensentry enforces the input can't forge the markers).
 3. **Least-privilege tool scoping** — minimize what a successful injection can do.
 4. **Egress allowlisting** — block data-exfil via markdown-image URLs and tool calls.
 5. **Output-side scanning** — re-run the same normalize+heuristic+classifier stack on model output and tool-call arguments before rendering/executing.
@@ -429,14 +429,14 @@ Aegis is **one layer.** Per OWASP LLM01:2025, ship it alongside:
 
 ## 11a. Companion controls shipped IN-package
 
-Of the seven §11 controls, the following ship inside Aegis because they reuse the same
+Of the seven §11 controls, the following ship inside opensentry because they reuse the same
 normalization + scanning engine — so consumers get defense-in-depth without assembling six
 libraries. The rest stay app/runtime architecture (documented, not bundled).
 
 ### Shipped as features
 
 ```ts
-// @aegis/guard/spotlight — make untrusted content unmistakably "data, not instructions"
+// @opensentry/guard/spotlight — make untrusted content unmistakably "data, not instructions"
 //   Microsoft Spotlighting: ASR >50% -> <3%. Highest-ROI cheap win.
 export type SpotlightMode = 'delimit' | 'datamark' | 'encode';
 export interface SpotlightResult { text: string; delimiter?: string; mode: SpotlightMode; }
@@ -447,7 +447,7 @@ export function spotlight(untrusted: string, opts?: {
 }): SpotlightResult;
 // Guarantee: the guard REJECTS any raw input that already contains the chosen delimiter/marker.
 
-// @aegis/guard/egress — block data-exfiltration on the way OUT
+// @opensentry/guard/egress — block data-exfiltration on the way OUT
 export interface EgressPolicy { allowlist: (string | RegExp)[]; stripDisallowed?: boolean; }
 export function egressFilter(text: string, policy: EgressPolicy): {
   safe: string;                     // disallowed URLs stripped (when stripDisallowed)
@@ -458,7 +458,7 @@ export function egressFilter(text: string, policy: EgressPolicy): {
 // Output-side scanning — reuse the CORE engine on egress, no new API:
 const out = await guard.check(modelOutput, { source: 'tool' });   // or createStreamScanner
 
-// @aegis/guard/prompt — channel separation: assemble prompts from TYPED fields, never concat
+// @opensentry/guard/prompt — channel separation: assemble prompts from TYPED fields, never concat
 export function assemble(parts: {
   system: string;                                     // trusted
   untrusted: { source: Source; content: string }[];  // auto-spotlighted + role-marker-stripped
@@ -495,10 +495,9 @@ createGuard({ policy: { perSource: { tool: { failMode: 'closed' } } } });
 |---|---|---|
 | **0 — Foundations** | Stand up version-controlled golden corpora (attack + benign incl. NotInject). Lock `GuardResult`/`Reason`/config types + subpath layout. Define hard gates: FPR `<0.5–1%`, ASR target, p99 budget. | Corpora + types + gates agreed |
 | **1 — Tier 0 core** | L0 front-gate, L1 two-copy normalization, L2 stats + entropy-gated decode-rescan, L3 RE2/linear regex + scoring + hard-block set. `createGuard`, `checkSync`, `check`, `wrap`. **A complete, useful, zero-dep release on its own.** | `p99 < 1ms` enforced in CI; passes Tier-0 corpus gates |
-| **2 — DX & rollout machinery + cheap companions** | `mode: shadow\|soft\|enforce` with `verdict`/`wouldVerdict`; per-source policy; `checkMessages`; `createStreamScanner`; Express/Hono/Next middleware; `onMetric`; LRU cache; CI regression suite that blocks benign-quality regressions. **Companions (§11a):** `@aegis/guard/spotlight` (delimit/datamark/encode), `@aegis/guard/prompt` channel-separation assembler, and output-side scanning helper — all zero-dep, ride on Tier 0. | Shadow mode + middleware + spotlight/assembler shipped; regression gate live |
-| **3 — Tier 1 local ML** | `@aegis/guard/onnx` + `/wasm`: Prompt-Guard-2-22M, warm singleton, int8, chunking, score-folding, per-source fail-open/closed, circuit breaker, degraded fallback. Tune escalation band by recall@FPR; validate vs NotInject. | Recall ↑ at FPR budget; over-defense within bound |
-| **4 — Tier 2 remote + agentic gating + agentic companions** | `@aegis/guard/remote` BYO-provider interface + reference adapters; conditional + async invocation; `highRiskAction` ⇒ escalate + fail-closed; spotlight-delimit content sent to judge; optional embedding-similarity ensemble. **Companions (§11a):** `guard.checkToolCall` (least-privilege assist), `@aegis/guard/egress` allowlist filter, HITL fail-closed signal. Document the doc-only dual-LLM pattern + remaining §11 controls. | Remote tier + high-risk gating + tool-call/egress guards working |
-| **5 — Safe rollout & continuous red-team** | Graduate shadow → soft → enforce on measured FPR + latency; canary + ramp; dashboards + alerts; scheduled garak + adaptive red-team; versioned corpus/classifier/signatures. | Enforcement live with monitoring; recurring red-team scheduled |
+| **2 — DX & rollout machinery + cheap companions** | `mode: shadow\|soft\|enforce` with `verdict`/`wouldVerdict`; per-source policy; `checkMessages`; `createStreamScanner`; Express/Hono/Next middleware; `onMetric`; LRU cache; CI regression suite that blocks benign-quality regressions. **Companions (§11a):** `@opensentry/guard/spotlight` (delimit/datamark/encode), `@opensentry/guard/prompt` channel-separation assembler, and output-side scanning helper — all zero-dep, ride on Tier 0. | Shadow mode + middleware + spotlight/assembler shipped; regression gate live |
+| **3 — Tier 1 local ML** | `@opensentry/guard/onnx` + `/wasm`: Prompt-Guard-2-22M, warm singleton, int8, chunking, score-folding, per-source fail-open/closed, circuit breaker, degraded fallback. Tune escalation band by recall@FPR; validate vs NotInject. | Recall ↑ at FPR budget; over-defense within bound |
+| **4 — Tier 2 remote + agentic gating + agentic companions** | `@opensentry/guard/remote` BYO-provider interface + reference adapters; conditional + async invocation; `highRiskAction` ⇒ escalate + fail-closed; spotlight-delimit content sent to judge; optional embedding-similarity ensemble. **Companions (§11a):** `guard.checkToolCall` (least-privilege assist), `@opensentry/guard/egress` allowlist filter, HITL fail-closed signal. Document the doc-only dual-LLM pattern + remaining §11 controls. | Remote tier + high-risk gating + tool-call/egress guards working |
 
 **Phase 1 alone is a shippable, dependency-free, sub-ms guard** — useful from day one. ML and remote are strictly additive.
 
@@ -508,7 +507,7 @@ createGuard({ policy: { perSource: { tool: { failMode: 'closed' } } } });
 
 | # | Risk | Mitigation |
 |---|---|---|
-| R1 | **Input validation cannot prevent prompt injection** (OWASP LLM01). Without §11 companions, indirect/agentic attacks still succeed despite a clean verdict. | Ship §11 controls; never sell Aegis as complete. |
+| R1 | **Input validation cannot prevent prompt injection** (OWASP LLM01). Without §11 companions, indirect/agentic attacks still succeed despite a clean verdict. | Ship §11 controls; never sell opensentry as complete. |
 | R2 | **Multi-turn / many-shot are structurally out of reach** of a per-message validator. | Documented scope boundary (§10); session-state component is future work. |
 | R3 | **False-positive / over-defense pressure** concentrates on multilingual, RTL, emoji-heavy, code-heavy, security-meta traffic. | Scoring-not-blocking, locale-aware thresholds, low keyword weights, two-copy invariant, hard FPR gate, continuous NotInject regression. |
 | R4 | **The two-copy invariant is a sharp edge** — folding the model copy silently corrupts non-Latin content. | Rigorously enforce + test that folding never touches the model copy; this is a release blocker. |
@@ -546,9 +545,9 @@ a final architect:
 
 | Candidate | Effectiveness | Performance | DX | Overall |
 |---|---|---|---|---|
-| Performance-first ("Aegis") | 9 | 9 | 8 | 8.7 |
-| Security-first ("AegisGuard") | 9 | 9 | 8 | **8.8** |
-| DX-first ("aegis-guard") | 8 | 9 | 9 | 8.6 |
+| Performance-first ("opensentry") | 9 | 9 | 8 | 8.7 |
+| Security-first ("opensentryGuard") | 9 | 9 | 8 | **8.8** |
+| DX-first ("opensentry-guard") | 8 | 9 | 9 | 8.6 |
 
 The recommended design (this document) is the **hybrid-tiered spine** taking the security model from
 the performance-first design, the observability + `verdict`/`wouldVerdict` shadow discipline from the

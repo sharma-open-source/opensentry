@@ -1,5 +1,5 @@
 // opensentry/remote — Tier 2 reference adapters (PLAN.md §5 Tier 2, §6).
-// Aegis/opensentry ships NO vendor SDKs in core. These are thin, optional adapters that
+// opensentry ships NO vendor SDKs in core. These are thin, optional adapters that
 // turn a `fetch`-reachable HTTP guard/judge endpoint into a `RemoteGuardProvider`. Nothing
 // is sent off-box unless the caller explicitly constructs one of these and wires it into
 // `createGuard({ detectors: [{ kind: 'remoteGuard', provider }] })`.

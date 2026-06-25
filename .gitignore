@@ -13,3 +13,4 @@ coverage/
 bench/data/
 bench/models/
 bench/report.json
+bench/report-tier2.json

@@ -69,7 +69,7 @@ export interface Thresholds {
   block: number;
 } // default { flag: 0.4, block: 0.85 }
 
-// Tier 2 is BYO-provider. Aegis ships this interface + thin reference adapters; YOU decide
+// Tier 2 is BYO-provider. opensentry ships this interface + thin reference adapters; YOU decide
 // if/when to enable it. Nothing is sent off-box unless you pass a provider here.
 export interface RemoteGuardProvider {
   name: string;
