@@ -17,7 +17,7 @@ export default defineConfig({
     'wasm/index': 'src/wasm/index.ts',
     'remote/index': 'src/remote/index.ts',
   },
-  format: ['esm'],
+  format: ['esm', 'cjs'],
   dts: true,
   clean: true,
   sourcemap: true,

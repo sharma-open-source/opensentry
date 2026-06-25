@@ -5,7 +5,7 @@
     "name": "Sharma SK",
     "url": "https://github.com/sharma-open-source"
   },
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Tiered prompt-injection validation layer. Zero-dep sub-ms Tier 0 core (Node + edge identical), optional local ML + remote guard tiers.",
   "type": "module",
   "license": "MIT",
@@ -16,62 +16,77 @@
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
     },
     "./confusables": {
       "types": "./dist/confusables/index.d.ts",
-      "import": "./dist/confusables/index.js"
+      "import": "./dist/confusables/index.js",
+      "require": "./dist/confusables/index.cjs"
     },
     "./spotlight": {
       "types": "./dist/spotlight/index.d.ts",
-      "import": "./dist/spotlight/index.js"
+      "import": "./dist/spotlight/index.js",
+      "require": "./dist/spotlight/index.cjs"
     },
     "./egress": {
       "types": "./dist/egress/index.d.ts",
-      "import": "./dist/egress/index.js"
+      "import": "./dist/egress/index.js",
+      "require": "./dist/egress/index.cjs"
     },
     "./prompt": {
       "types": "./dist/prompt/index.d.ts",
-      "import": "./dist/prompt/index.js"
+      "import": "./dist/prompt/index.js",
+      "require": "./dist/prompt/index.cjs"
     },
     "./canary": {
       "types": "./dist/canary/index.d.ts",
-      "import": "./dist/canary/index.js"
+      "import": "./dist/canary/index.js",
+      "require": "./dist/canary/index.cjs"
     },
     "./taint": {
       "types": "./dist/taint/index.d.ts",
-      "import": "./dist/taint/index.js"
+      "import": "./dist/taint/index.js",
+      "require": "./dist/taint/index.cjs"
     },
     "./session": {
       "types": "./dist/session/index.d.ts",
-      "import": "./dist/session/index.js"
+      "import": "./dist/session/index.js",
+      "require": "./dist/session/index.cjs"
     },
     "./express": {
       "types": "./dist/express/index.d.ts",
-      "import": "./dist/express/index.js"
+      "import": "./dist/express/index.js",
+      "require": "./dist/express/index.cjs"
     },
     "./hono": {
       "types": "./dist/hono/index.d.ts",
-      "import": "./dist/hono/index.js"
+      "import": "./dist/hono/index.js",
+      "require": "./dist/hono/index.cjs"
     },
     "./next": {
       "types": "./dist/next/index.d.ts",
-      "import": "./dist/next/index.js"
+      "import": "./dist/next/index.js",
+      "require": "./dist/next/index.cjs"
     },
     "./onnx": {
       "types": "./dist/onnx/index.d.ts",
-      "import": "./dist/onnx/index.js"
+      "import": "./dist/onnx/index.js",
+      "require": "./dist/onnx/index.cjs"
     },
     "./wasm": {
       "types": "./dist/wasm/index.d.ts",
-      "import": "./dist/wasm/index.js"
+      "import": "./dist/wasm/index.js",
+      "require": "./dist/wasm/index.cjs"
     },
     "./remote": {
       "types": "./dist/remote/index.d.ts",
-      "import": "./dist/remote/index.js"
+      "import": "./dist/remote/index.js",
+      "require": "./dist/remote/index.cjs"
     }
   },
-  "main": "./dist/index.js",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "files": [
     "dist"
