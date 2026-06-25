@@ -5,7 +5,7 @@
     "name": "Sharma SK",
     "url": "https://github.com/sharma-open-source"
   },
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Tiered prompt-injection validation layer. Zero-dep sub-ms Tier 0 core (Node + edge identical), optional local ML + remote guard tiers.",
   "type": "module",
   "license": "MIT",
