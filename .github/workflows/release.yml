@@ -24,6 +24,7 @@ jobs:
           node-version: 22
           cache: pnpm
           registry-url: https://registry.npmjs.org
+          token: ${{ secrets.NPM_TOKEN }}
 
       - run: pnpm install --frozen-lockfile
 
@@ -41,5 +42,3 @@ jobs:
       - run: pnpm build
 
       - run: pnpm publish --access public --provenance --no-git-checks
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
