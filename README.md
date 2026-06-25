@@ -704,29 +704,6 @@ pnpm bench         # runs the full suite, ~65s, writes bench/report.json
 | Blended, old default (`alwaysEscalate:false` on `user`) | 1.000 | 0.304 | 0.467 | 0.000 | 0.655 | 0.03ms | 7.2ms |
 | **Blended, calibrated (`minConfidence:0.87`)** | 0.997 | 0.719 | 0.836 | 0.006 | 0.859 | 5.5ms | 96ms |
 
-**This benchmark found and drove a real fix, not just a measurement.** The first run showed
-the blended pipeline performing *identically* to Tier 0 alone — Tier 1 only escalated when
-Tier 0's own score already landed in the uncertain "flag" band, and `user` was the one source
-that defaulted to `alwaysEscalate: false`. Harmful-intent/jailbreak attacks with no structural
-marker (AdvBench/JBB harmful, DAN-style prompts) scored 0 on Tier 0 and never reached the
-model. `DEFAULT_PER_SOURCE.user.alwaysEscalate` is now `true` (see [CHANGELOG.md](CHANGELOG.md)),
-recovering that recall — but on its own that pushed NotInject over-defense to 9.1%, over the
-project's <5% gate. Pairing it with `minConfidence: 0.87` on the `localModel` detector (see
-"Calibrating ML confidence" above) brings over-defense back to 4.7% while keeping recall at
-0.719 (vs. 0.304 for Tier 0 alone) — a real, measured trade-off. Full before/after numbers,
-per-category breakdown, and how the 0.87 figure was derived: **[bench/REPORT.md](bench/REPORT.md)**.
-
-The benchmark also caught a real bug: `LocalModelDetector.quantized: true` (the documented
-default) had **zero effect** — `src/onnx/index.ts`/`src/wasm/index.ts` passed it as a
-`quantized` boolean option that `@huggingface/transformers` v3+ no longer accepts (replaced
-by `dtype`), so the Node runtime always loaded fp32 regardless of the setting. Now fixed and
-benchmarked: quantization shrinks the model 3.3x (284MB→87MB) with unchanged ROC-AUC, but
-latency barely moves on CPU for a model this small — see "Quantization" in the report before
-assuming `quantized: true` will speed up your deployment. The report also compares the larger
-86M model directly (its claimed multilingual advantage doesn't show up on the one multilingual
-axis we could test — NotInject's `Multilingual` category over-defense — though the 22M/86M
-attack corpora here are English-only, so the recall side of that claim remains unverified) and
-sets up `pnpm bench:snapshot` to track results across runs in `bench/history/`.
 
 **Considered and rejected: swapping the default for an ungated model.**
 `meta-llama/Llama-Prompt-Guard-2` is gated (access-request friction) with no published ONNX

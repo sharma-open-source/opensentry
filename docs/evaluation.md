@@ -129,11 +129,6 @@ NotInject over-defense to 9.1%, over the <5% gate. Pairing it with `minConfidenc
 0.87` brings over-defense back to 4.7% while keeping recall at 0.719 (vs. 0.304 for
 Tier 0 alone).
 
-The benchmark also caught a real bug: `quantized: true` (the documented default) had
-**zero effect** — `src/onnx/index.ts`/`src/wasm/index.ts` passed it as an option that
-`@huggingface/transformers` v3+ no longer accepts (replaced by `dtype`). Now fixed and
-benchmarked. See [`../bench/REPORT.md`](../bench/REPORT.md) "Quantization".
-
 ### Evaluated and rejected
 
 - **Switching the default to an ungated alternative** (`protectai/deberta-v3-base-prompt-injection-v2`):
