@@ -150,14 +150,15 @@ describe('honoMiddleware', () => {
     expect(result.status).toBe(400);
   });
 
-  test('no body / JSON parse error → next() called', async () => {
+  test('no body / JSON parse error → blocked (fail closed)', async () => {
     let nextCalled = false;
+    let blockedStatus: number | undefined;
     const c = {
       req: { json: async () => {
         throw new Error('parse error');
       } },
-      json() {
-        throw new Error('should not block');
+      json(_body: unknown, status?: number) {
+        blockedStatus = status;
       },
       set() {},
       get() {
@@ -167,7 +168,8 @@ describe('honoMiddleware', () => {
     await honoMiddleware()(c, async () => {
       nextCalled = true;
     });
-    expect(nextCalled).toBe(true);
+    expect(nextCalled).toBe(false);
+    expect(blockedStatus).toBe(400);
   });
 });
 
@@ -200,13 +202,15 @@ describe('nextMiddleware', () => {
     expect(result).toBe(null);
   });
 
-  test('JSON parse error → null', async () => {
+  test('JSON parse error → blocked (fail closed)', async () => {
     const req = {
       json: async () => {
         throw new Error('parse error');
       },
     };
     const result = await nextMiddleware()(req);
-    expect(result).toBe(null);
+    expect(result).not.toBe(null);
+    expect(result).toBeInstanceOf(Response);
+    expect(result?.status).toBe(400);
   });
 });

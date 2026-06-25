@@ -24,7 +24,10 @@ export function nextMiddleware(opts?: NextMiddlewareOptions) {
     try {
       body = await req.json();
     } catch {
-      return null;
+      return new Response(JSON.stringify({ error: 'Malformed request body' }), {
+        status: blockStatus,
+        headers: { 'Content-Type': 'application/json' },
+      });
     }
     const text =
       body && typeof body === 'object' ? (body as Record<string, unknown>)[inputField] : undefined;

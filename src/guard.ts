@@ -333,8 +333,13 @@ export function createGuard(config?: GuardConfig): Guard {
     return result;
   }
 
-  function cacheKey(source: Source, highRisk: boolean, normalized: string): string {
-    return `${source}:${highRisk ? '1' : '0'}:${hashStr(normalized)}`;
+  function cacheKey(
+    source: Source,
+    highRisk: boolean,
+    normalized: string,
+    locale: string | undefined,
+  ): string {
+    return `${source}:${highRisk ? '1' : '0'}:${locale ?? ''}:${hashStr(normalized)}`;
   }
 
   function checkSyncInternal(input: string, ctx: GuardContext | undefined): GuardResult {
@@ -353,7 +358,7 @@ export function createGuard(config?: GuardConfig): Guard {
     const t0 = nowMs();
     const l0 = frontGate(input, cfg.normalize);
     const l1 = normalizeInput(l0.text, cfg.normalize, ctx?.locale);
-    const key = cacheKey(source, ctx?.highRiskAction ?? false, l1.matchingCopy);
+    const key = cacheKey(source, ctx?.highRiskAction ?? false, l1.matchingCopy, ctx?.locale);
     const cached = cache.get(key);
     if (cached) {
       const res: GuardResult = { ...cached, latencyMs: nowMs() - t0 };
@@ -454,6 +459,7 @@ export function createGuard(config?: GuardConfig): Guard {
       mode: decision.mode,
       latencyMs: current.latencyMs,
     };
+    if (current.neutralized) result.neutralized = true;
     result.degraded = { tier: failedTier, reason: 'degraded_mode' };
     return result;
   }
@@ -698,7 +704,7 @@ export function createGuard(config?: GuardConfig): Guard {
     const t0 = nowMs();
     const l0 = frontGate(input, cfg.normalize);
     const l1 = normalizeInput(l0.text, cfg.normalize, ctx?.locale);
-    const key = cacheKey(source, ctx?.highRiskAction ?? false, l1.matchingCopy);
+    const key = cacheKey(source, ctx?.highRiskAction ?? false, l1.matchingCopy, ctx?.locale);
     const cached = cache.get(key);
     if (cached) {
       const res: GuardResult = { ...cached, latencyMs: nowMs() - t0 };
@@ -710,16 +716,56 @@ export function createGuard(config?: GuardConfig): Guard {
     let current = runTier0(input, ctx);
     let escalated = false;
 
-    if (localDetector) {
-      const ml = await maybeEscalateToMl(current, ctx, localDetector, sp);
-      current = ml.result;
-      escalated = escalated || ml.escalated;
-    }
+    // When the source always escalates, ML and embedding both run unconditionally
+    // regardless of each other's outcome — so they can run concurrently (latency = max of
+    // the two, not their sum) and have their reasons folded together once. Otherwise the
+    // embedding gate depends on ML's post-fold verdict, so they must stay sequential.
+    if (localDetector && embeddingDetector && sp.alwaysEscalate) {
+      const [ml, emb] = await Promise.all([
+        maybeEscalateToMl(current, ctx, localDetector, sp),
+        maybeEscalateToEmbedding(current, ctx, embeddingDetector, sp),
+      ]);
+      const mlReason = !ml.result.degraded ? ml.result.reasons.at(-1) : undefined;
+      const embReason = !emb.result.degraded ? emb.result.reasons.at(-1) : undefined;
+      const allReasons = [
+        ...current.reasons,
+        ...(mlReason ? [mlReason] : []),
+        ...(embReason ? [embReason] : []),
+      ];
+      const newScore = aggregateScore(allReasons);
+      const decision = decideVerdict(
+        newScore,
+        allReasons,
+        sp.thresholds,
+        cfg.hardBlockRules,
+        cfg.mode,
+        ctx?.highRiskAction ?? false,
+      );
+      current = {
+        ...current,
+        verdict: decision.verdict,
+        wouldVerdict: decision.wouldVerdict,
+        score: newScore,
+        reasons: allReasons,
+        tier: embReason ? 2 : mlReason ? 1 : current.tier,
+        shadow: decision.shadow,
+        mode: decision.mode,
+      };
+      if (ml.result.degraded) current.degraded = ml.result.degraded;
+      else if (emb.result.degraded) current.degraded = emb.result.degraded;
+      escalated = escalated || ml.escalated || emb.escalated;
+    } else {
+      if (localDetector) {
+        const ml = await maybeEscalateToMl(current, ctx, localDetector, sp);
+        current = ml.result;
+        escalated = escalated || ml.escalated;
+      }
 
-    if (embeddingDetector) {
-      const emb = await maybeEscalateToEmbedding(current, ctx, embeddingDetector, sp);
-      current = emb.result;
-      escalated = escalated || emb.escalated;
+      if (embeddingDetector) {
+        const emb = await maybeEscalateToEmbedding(current, ctx, embeddingDetector, sp);
+        current = emb.result;
+        escalated = escalated || emb.escalated;
+      }
     }
 
     if (remoteDetector) {

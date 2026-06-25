@@ -13,6 +13,7 @@ export class CircuitBreaker {
   private failures = 0;
   private lastFailureTime = 0;
   private _state: CircuitState = 'closed';
+  private probeInFlight = false;
 
   constructor(
     private readonly threshold: number = DEFAULT_THRESHOLD,
@@ -23,23 +24,27 @@ export class CircuitBreaker {
     return this._state;
   }
 
-  // True if an attempt is allowed (closed or half-open after cooldown).
+  // True if an attempt is allowed (closed, or half-open with no probe in flight).
   canAttempt(now: number): boolean {
     if (this._state === 'closed') return true;
     if (this._state === 'open') {
       if (now - this.lastFailureTime > this.cooldownMs) {
         this._state = 'half-open';
+        this.probeInFlight = true;
         return true;
       }
       return false;
     }
-    // half-open: allow exactly one probe
+    // half-open: allow exactly one probe; concurrent callers wait for its outcome.
+    if (this.probeInFlight) return false;
+    this.probeInFlight = true;
     return true;
   }
 
   recordSuccess(): void {
     this.failures = 0;
     this._state = 'closed';
+    this.probeInFlight = false;
   }
 
   recordFailure(now: number): void {
@@ -48,11 +53,13 @@ export class CircuitBreaker {
     if (this._state === 'half-open' || this.failures >= this.threshold) {
       this._state = 'open';
     }
+    this.probeInFlight = false;
   }
 
   reset(): void {
     this.failures = 0;
     this.lastFailureTime = 0;
     this._state = 'closed';
+    this.probeInFlight = false;
   }
 }

@@ -31,7 +31,7 @@ export function honoMiddleware(opts?: HonoMiddlewareOptions) {
     try {
       body = await c.req.json();
     } catch {
-      await next();
+      c.json({ error: 'Malformed request body' }, blockStatus);
       return;
     }
     const text =
