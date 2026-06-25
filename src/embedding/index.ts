@@ -46,15 +46,22 @@ export const DEFAULT_ATTACK_CORPUS: readonly string[] = [
 
 type EmbedFn = (s: string) => Promise<number[]>;
 
-// One embedded-corpus cache per distinct embed function — avoids re-embedding the
-// reference corpus on every check() call for the lifetime of a guard instance.
-const corpusCache = new WeakMap<EmbedFn, Promise<number[][]>>();
+// One embedded-corpus cache per distinct (embed function, corpus) pair — avoids
+// re-embedding the reference corpus on every check() call for the lifetime of a guard
+// instance, while still re-embedding if the same embed fn is reused against a different
+// corpus (e.g. across two Guard instances with distinct embeddingCorpus configs).
+const corpusCache = new WeakMap<EmbedFn, Map<readonly string[], Promise<number[][]>>>();
 
 function getCorpusVectors(embed: EmbedFn, corpus: readonly string[]): Promise<number[][]> {
-  let cached = corpusCache.get(embed);
+  let byCorpus = corpusCache.get(embed);
+  if (!byCorpus) {
+    byCorpus = new Map();
+    corpusCache.set(embed, byCorpus);
+  }
+  let cached = byCorpus.get(corpus);
   if (!cached) {
     cached = Promise.all(corpus.map((c) => embed(c)));
-    corpusCache.set(embed, cached);
+    byCorpus.set(corpus, cached);
   }
   return cached;
 }

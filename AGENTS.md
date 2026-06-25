@@ -43,7 +43,7 @@
 
 ## Corpora
 
-- `corpus/attacks.json` — 24 in-scope + 4 outOfScope attack samples
+- `corpus/attacks.json` — 23 in-scope + 4 outOfScope attack samples
 - `corpus/benign.json` — 20 benign samples
 - `corpus/notinject.json` — 25 "looks like injection but isn't" samples (over-defense guard)
-- To add real datasets: drop JSON files into `corpus/` with the same schema (`id`, `text`, `label`, optional `outOfScope`)
+- To add real datasets: drop JSON files into `corpus/` with the same schema (`id`, `category`, `label`, `expect`, `text`, optional `outOfScope`)

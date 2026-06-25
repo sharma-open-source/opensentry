@@ -192,10 +192,15 @@ function scanPii(text: string, policy: EgressPolicy): Reason[] {
       if (tok && tok.length === 0) SSN_RE.lastIndex++;
     }
 
+    // Card-shaped spans (13-16 digits) are excluded from the phone scan below, whether or
+    // not they pass Luhn — a Luhn-failed run is still a card-shaped number (e.g. truncated/
+    // redacted), not a phone number, and shouldn't be downgraded to the lower-weight signal.
+    const cardSpans: [number, number][] = [];
     CARD_RE.lastIndex = 0;
     while ((m = CARD_RE.exec(text)) !== null) {
       const tok = m[0];
       if (!tok) continue;
+      cardSpans.push([m.index, m.index + tok.length]);
       if (luhnValid(tok)) {
         reasons.push({
           code: 'pii_egress',
@@ -214,13 +219,16 @@ function scanPii(text: string, policy: EgressPolicy): Reason[] {
       const tok = m[0];
       if (!tok) continue;
       const digits = tok.replace(/\D/g, '');
-      if (digits.length >= 10 && digits.length <= 15) {
+      const start = m.index;
+      const end = m.index + tok.length;
+      const overlapsCard = cardSpans.some(([cs, ce]) => start < ce && end > cs);
+      if (digits.length >= 10 && digits.length <= 15 && !overlapsCard) {
         reasons.push({
           code: 'pii_egress',
           category: 'exfil',
           weight: 0.4,
           message: `possible PII (phone number) in egress`,
-          span: [m.index, m.index + tok.length],
+          span: [start, end],
         });
       }
       if (tok.length === 0) PHONE_RE.lastIndex++;
