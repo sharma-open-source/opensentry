@@ -1,5 +1,5 @@
 // opensentry/confusables — optional, lazily-imported UTS-39 confusables table.
-// Keeps the full table OUT of the edge core bundle (PLAN.md §6 package layout).
+// Keeps the full table OUT of the edge core bundle.
 //
 // This is a curated subset of Unicode UTS-39 confusables.txt covering the entries
 // most relevant to prompt-injection obfuscation (cross-script letter look-alikes

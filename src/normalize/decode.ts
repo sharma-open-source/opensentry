@@ -1,4 +1,4 @@
-// PLAN.md §5 L2 — bounded decode-and-rescan. Decodes base64/hex/URL/HTML-entity blobs and
+// L2 — bounded decode-and-rescan. Decodes base64/hex/URL/HTML-entity blobs and
 // ROT13, returning candidate decoded strings for re-scanning through L1+L3.
 // Gated behind an entropy/looks-encoded check so benign text skips it (hot path stays fast).
 // Uses only Web-standard globals (atob, TextDecoder, Uint8Array) — edge-safe, zero-dep.

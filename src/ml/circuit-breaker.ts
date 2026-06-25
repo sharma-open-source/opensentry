@@ -1,5 +1,5 @@
 // Circuit breaker for Tier 1 ML — prevents cascading failures when the model is unavailable.
-// PLAN.md §5 Tier 1: "per-source fail-open / fail-closed; on error/timeout fall back to Tier-0 verdict".
+// Tier 1: "per-source fail-open / fail-closed; on error/timeout fall back to Tier-0 verdict".
 // The circuit breaker sits in front of the runner: after N consecutive failures, it opens
 // and short-circuits all subsequent attempts to "degraded" without hitting the model.
 // After a cooldown, it enters half-open and allows a single probe; success closes, failure re-opens.

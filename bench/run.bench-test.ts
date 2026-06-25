@@ -85,7 +85,7 @@ test(
       'fp32',
     );
     await mlRunner.warm();
-    // Quantized comparison (IMPROVEMENTS_PLAN.md item 3): int8 dynamic quantization of the
+    // Quantized comparison: int8 dynamic quantization of the
     // same export via onnxruntime.quantization.quantize_dynamic — see bench/REPORT.md for the
     // exact command. Verifies the actual accuracy/latency trade-off, since src/onnx/index.ts's
     // `quantized: true` default previously had no effect at all (see CHANGELOG.md).
@@ -95,7 +95,7 @@ test(
       'q8',
     );
     await mlRunnerQuantized.warm();
-    // 86M comparison (IMPROVEMENTS_PLAN.md item 4): Meta's card claims the 86M model's
+    // 86M comparison: Meta's card claims the 86M model's
     // multilingual base (mDeBERTa-v3 vs. 22M's English-only DeBERTa-xsmall) gives a real
     // multilingual AUC advantage — tests that claim against NotInject's own Multilingual
     // category, not just an extrapolated claim from the model card.
@@ -111,7 +111,7 @@ test(
     // remove the gated-access friction documented in bench/REPORT.md "What's being tested".
     const mlRunnerProtectAi = await createProtectAiRunner('fp32');
     await mlRunnerProtectAi.warm();
-    // As shipped: 'user' defaults to alwaysEscalate:true (IMPROVEMENTS_PLAN.md item 1).
+    // As shipped: 'user' defaults to alwaysEscalate:true.
     const guardBlended = createGuard({
       detectors: [{ kind: 'heuristics' }, { kind: 'localModel', runner: mlRunner }],
     });
@@ -120,7 +120,7 @@ test(
       detectors: [{ kind: 'heuristics' }, { kind: 'localModel', runner: mlRunner }],
       policy: { perSource: { user: { alwaysEscalate: false } } },
     });
-    // As shipped + minConfidence calibration (IMPROVEMENTS_PLAN.md item 2): floors ML scores
+    // As shipped + minConfidence calibration: floors ML scores
     // before folding. 0.59 (this model's general recallAtFpr1pct threshold) was tried first
     // and only got NotInject over-defense from 9.1% to 7.4% — NotInject's hard-negative score
     // distribution is heavier-tailed than generic benign text, so it needs its own threshold,
@@ -414,7 +414,7 @@ test(
         n: samples.length,
         flagged,
       };
-      // Per-category breakdown (item 4, IMPROVEMENTS_PLAN.md): NotInject's "Multilingual"
+      // Per-category breakdown: NotInject's "Multilingual"
       // category is a real slice worth seeing on its own — averaging it into the overall
       // rate above can hide a category-specific over-defense problem the aggregate doesn't show.
       const byCat = groupBy(samples, (s) => s.category);
@@ -444,12 +444,12 @@ test(
           ' (bench/models/llama-prompt-guard-2-22m/). Label index (LABEL_1=malicious) was verified' +
           ' empirically, not assumed from docs, since the exported config.json carries no id2label.',
         'deepset/prompt-injections and JasperLS/prompt-injections were deliberately excluded — same' +
-          ' underlying noisy/mislabeled data, and PLAN.md §9 already flags it as training-only/contaminated.',
+          ' underlying noisy/mislabeled data, and the design already flags it as training-only/contaminated.',
         'notinject is benign-labeled but reported separately as an over-defense rate, not folded into' +
           ' the headline benign FPR — same convention as corpus/eval.ts.',
-        '"blended" now reflects the shipped default (user alwaysEscalate:true, IMPROVEMENTS_PLAN.md' +
-          ' item 1); "blendedOptOut" reproduces the OLD default for before/after comparison;' +
-          ' "blendedCalibrated" adds minConfidence:0.87 (item 2, calibrated directly against' +
+        '"blended" now reflects the shipped default (user alwaysEscalate:true' +
+          '); "blendedOptOut" reproduces the OLD default for before/after comparison;' +
+          ' "blendedCalibrated" adds minConfidence:0.87 (calibrated directly against' +
           ' NotInject — see bench/REPORT.md) to claw back the over-defense regression that' +
           ' always-escalating user traffic introduces on its own.',
         '"tier1Quantized" (item 3) uses an int8 dynamic-quantized export (onnxruntime.quantization' +

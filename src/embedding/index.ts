@@ -1,4 +1,4 @@
-// Tier-2 embedding-similarity ensemble (PLAN.md §5/§12 Phase 4: "optional embedding-similarity
+// Tier-2 embedding-similarity ensemble ("optional embedding-similarity
 // ensemble"). BYO `embed` function — opensentry bundles no embedding model. The detector compares
 // the input's embedding against a small reference corpus of canonical attack phrases (or a
 // caller-supplied corpus) via cosine similarity; the top-K average similarity is folded into the
@@ -20,7 +20,7 @@ export function cosineSimilarity(a: number[], b: number[]): number {
   return dot / (Math.sqrt(normA) * Math.sqrt(normB));
 }
 
-// A small set of canonical attack phrases spanning the major families in PLAN.md §3
+// A small set of canonical attack phrases spanning the major attack families
 // (instruction override, jailbreak persona, refusal suppression, role/template spoof,
 // exfil lure, policy puppetry) — used as the default reference corpus when the caller
 // doesn't supply their own.

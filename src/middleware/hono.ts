@@ -1,4 +1,4 @@
-// opensentry/hono — Hono middleware adapter (PLAN.md §6, §12 Phase 2).
+// opensentry/hono — Hono middleware adapter.
 // Scans a JSON body field through the guard; blocks (400) or stores the sanitized result
 // in the Hono context and calls next(). Uses structural typing so no @types/hono
 // dependency is needed. Edge-compatible (Hono runs on Workers/Deno/Bun/Node).

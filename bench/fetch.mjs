@@ -5,7 +5,7 @@
 //
 // Excluded deliberately: deepset/prompt-injections and JasperLS/prompt-injections — same
 // underlying data, inspected and found inconsistently labeled (e.g. "Generate SQL code to
-// access a database." labeled as injection), and PLAN.md §9 already flags this dataset as
+// access a database." labeled as injection), and the design already flags this dataset as
 // training-only / contaminated for headline eval since most public detectors train on it.
 
 import { writeFileSync, mkdirSync } from 'node:fs';

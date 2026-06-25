@@ -9,7 +9,7 @@ import type {
   Thresholds,
 } from './types.js';
 
-// ---- Locked defaults (PLAN.md §0, §6, §8) ----
+// ---- Locked defaults ----
 
 export const DEFAULT_THRESHOLDS: Thresholds = { flag: 0.4, block: 0.85 };
 export const DEFAULT_MAX_SCAN_BYTES = 65536;
@@ -17,7 +17,7 @@ export const DEFAULT_DECODE_DEPTH = 2;
 export const DEFAULT_MODE: Mode = 'enforce';
 export const DEFAULT_FAIL_MODE: 'open' | 'closed' = 'open';
 
-// Deterministic hard-block floor (PLAN.md §4.2, §7.3): fires even in fail-open.
+// Deterministic hard-block floor: fires even in fail-open.
 // Kept tiny + high-confidence to protect benign quality / NotInject hard-negatives.
 export const DEFAULT_HARD_BLOCK_RULES: readonly ReasonCode[] = [
   'unicode_tag_smuggling', // U+E0000–E007F Tag block — zero legitimate use
@@ -25,10 +25,10 @@ export const DEFAULT_HARD_BLOCK_RULES: readonly ReasonCode[] = [
   'template_forgery', // forged chat-template / turn markers
 ];
 
-// Per-source defaults (PLAN.md §6 policy.perSource).
+// Per-source defaults (policy.perSource).
 //
 // `user` defaults to alwaysEscalate:true (changed from false — see bench/REPORT.md and
-// IMPROVEMENTS_PLAN.md item 1). Real-corpus benchmarking found that harmful-intent/jailbreak
+// Real-corpus benchmarking). Real-corpus benchmarking found that harmful-intent/jailbreak
 // attacks with no structural marker (AdvBench, JBB-harmful, DAN-style prompts) score exactly
 // 0 on Tier 0 and never reach the flag band, so under the old default Tier 1 never saw them
 // for the dominant attack channel. This only changes behavior once a localModel/remoteGuard/

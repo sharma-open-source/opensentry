@@ -172,7 +172,7 @@ corpora, not a recommendation for your deployment.
 
 ## Red-team & adaptive testing
 
-Prompt injection cannot be "patched once." PLAN.md §9 recommends:
+Prompt injection cannot be "patched once." The design recommends:
 
 - **Scheduled + pre-release `garak`** plus adaptive attackers (GCG/AutoDAN, TAP,
   Crescendo/multi-turn, encoding, translation, indirect-via-document)

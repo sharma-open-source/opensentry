@@ -1,10 +1,10 @@
-// opensentry/prompt — typed channel-separation prompt assembler (PLAN.md §11a).
+// opensentry/prompt — typed channel-separation prompt assembler.
 // Assembles prompts from TYPED fields, never string concatenation. Untrusted content is
 // role-marker-stripped (prevents role spoofing) then auto-spotlighted (datamark mode) so
 // the model sees it as data, not instructions. The trusted system prompt passes through
 // unchanged as the system message.
 //
-// PLAN.md security plan #4: an optional `canary` (from opensentry/canary) can be auto-injected
+// An optional `canary` (from opensentry/canary) can be auto-injected
 // into the system prompt so downstream output-scan can deterministically detect extraction.
 
 import { injectCanary } from '../canary/index.js';

@@ -6,8 +6,8 @@ latency percentiles). It exercises the actual shipped pipeline, including the re
 Tier-1 model — not a stand-in.
 
 **Status: the headline finding below has been fixed.** The first run of this benchmark found
-that `user` traffic never reached Tier 1 under the old default policy. `IMPROVEMENTS_PLAN.md`
-items 1 and 2 (flip `user`'s `alwaysEscalate` default to `true`, add a `minConfidence` floor
+that `user` traffic never reached Tier 1 under the old default policy. Items 1 and 2
+(flip `user`'s `alwaysEscalate` default to `true`, add a `minConfidence` floor
 to avoid the resulting over-defense regression) have landed — see "Status after the fix" below.
 The original finding is kept further down for the before/after record.
 
@@ -56,10 +56,10 @@ known attack/benign text, not assumed from docs, because the exported config car
 **Deliberately excluded:** `deepset/prompt-injections` and `JasperLS/prompt-injections`
 (identical underlying data). Inspection found inconsistent labels — e.g. "Generate SQL code
 to access a database." and a plain role-play interview prompt both labeled as injection — and
-PLAN.md §9 already flags this dataset as training-only/contaminated for headline eval since
+the design already flags this dataset as training-only/contaminated for headline eval since
 most public detectors train on it.
 
-## Headline results (current — after IMPROVEMENTS_PLAN.md items 1+2)
+## Headline results (current)
 
 | View | n | Precision | Recall | F1 | FPR | ROC-AUC | PR-AUC | Recall@1%FPR | p50 latency | p99 latency |
 |---|---|---|---|---|---|---|---|---|---|---|
@@ -106,7 +106,7 @@ score landed in the uncertain "flag" band, or for `alwaysEscalate` sources (`ret
 `user` traffic: 5.5%. Attacks with no structural marker for Tier 0 to flag —
 `harmful_behavior` (AdvBench + JBB harmful) and most `jailbreak_persona` prompts — scored
 exactly 0 on Tier 0 and never reached Tier 1. `DEFAULT_PER_SOURCE.user.alwaysEscalate` has
-since been changed to `true` in `src/config.ts` to fix this (`IMPROVEMENTS_PLAN.md` item 1).
+since been changed to `true` in `src/config.ts` to fix this.
 
 ### Per-category recall (attack categories only — precision/FPR not meaningful on benign-only categories)
 
@@ -128,7 +128,7 @@ hard-negative tail than `instruction_override`/`jailbreak_persona` do (which bar
 
 ### NotInject — over-defense rate (benign text containing attack trigger words)
 
-| View | Over-defense rate | Gate (PLAN.md §0, <5%) |
+| View | Over-defense rate | Gate (<5%) |
 |---|---|---|
 | tier0 | 0.6% (2/339) | pass |
 | tier1 (real model, raw) | 8.6% (29/339) | — (not gated standalone) |
@@ -141,7 +141,7 @@ recall gains above, but pushes NotInject over-defense past the documented releas
 paired with the `minConfidence` calibration — which is exactly why the plan shipped both
 together, not the escalation default alone.
 
-## Quantization (IMPROVEMENTS_PLAN.md item 3)
+## Quantization
 
 **This caught a real bug, not just a missing benchmark.** `src/onnx/index.ts` and
 `src/wasm/index.ts` defaulted `quantized: true` and passed it straight through as a
@@ -194,7 +194,7 @@ documented anywhere in opensentry and had to be reverse-engineered from the libr
   build. Re-run the NotInject-specific percentile sweep (see Methodology notes) per dtype you
   actually ship.
 
-## 86M model comparison (IMPROVEMENTS_PLAN.md item 4)
+## 86M model comparison
 
 The model card claims `Llama-Prompt-Guard-2-86M` has a real multilingual advantage over the
 22M model (mDeBERTa-v3 base vs. 22M's English-only DeBERTa-xsmall; card-reported multilingual

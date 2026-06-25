@@ -1,5 +1,5 @@
-// opensentry/taint — provenance tracking for indirect-injection defense (PLAN.md security
-// plan #3). JS has no true taint propagation, so this ships an explicit provenance-passing
+// opensentry/taint — provenance tracking for indirect-injection defense.
+// JS has no true taint propagation, so this ships an explicit provenance-passing
 // API: callers mark spans of untrusted-origin text (retrieved/tool/web/email) and later ask
 // whether a candidate string (e.g. a tool-call's args) contains any tainted span.
 //

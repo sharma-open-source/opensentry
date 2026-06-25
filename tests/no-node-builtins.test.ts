@@ -17,7 +17,7 @@ function walk(dir: string, out: string[] = []): string[] {
   return out;
 }
 
-// PLAN.md §0/§5: Tier 0 core has ZERO Node builtins and runs identically on
+// Tier 0 core has ZERO Node builtins and runs identically on
 // Node/Deno/Bun/Workers. Enforce it statically so an accidental `node:fs` / `Buffer`
 // / `process` usage in src can never land.
 //

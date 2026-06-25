@@ -8,7 +8,7 @@ import { scanMarkers } from './l3.js';
 export interface L2Output {
   reasons: Reason[];
   // Encoded blobs (base64/hex) whose decoded content re-scanned as injection → eligible for
-  // model-copy neutralization (PLAN.md security plan #2). Each entry is the exact matched blob
+  // model-copy neutralization. Each entry is the exact matched blob
   // text (case-preserved) so the caller can locate it in the model copy. Empty unless
   // neutralization-relevant blobs were found.
   maliciousBlobs?: { source: string; decoded: string }[];
@@ -205,7 +205,7 @@ const COMMON_TRIGRAMS = new Set([
   'uld',
 ]);
 
-// Cheap GCG / token-salad signal (PLAN.md security plan #8). Zero-LM proxy: optimizer
+// Cheap GCG / token-salad signal. Zero-LM proxy: optimizer
 // suffixes read as garbage to humans but flip models. The signal is calibrated against benign
 // prose, code, base64, and hashes (see tests/l2.test.ts) and is deliberately conservative:
 //
@@ -332,7 +332,7 @@ function rescanOne(
   return { count, codes };
 }
 
-// PLAN.md §5 L2 — stats/routing + decode-and-rescan.
+// L2 — stats/routing + decode-and-rescan.
 // All outputs are score contributions + escalation signals, never standalone blocks.
 // findAndDecode is cheap when no encoded patterns are present (a few regex tests); ROT13
 // rescan is always run because ROT13-encoded text has normal entropy and no "looks-encoded"
@@ -349,12 +349,12 @@ export function analyzeL2(
 
   const scripts = countScripts(matchingCopy);
 
-  // Special/control-token detection (PLAN.md security plan #6): tokenizer control tokens in
+  // Special/control-token detection: tokenizer control tokens in
   // untrusted input → special_token_injection. Scanned on the matching copy only; the model
   // copy is untouched. Runs before the entropy gate (it is not decode-routed).
   reasons.push(...scanSpecialTokens(matchingCopy, opts.specialTokens));
 
-  // Cheap GCG / token-salad signal (PLAN.md security plan #8): low-weight escalation signal,
+  // Cheap GCG / token-salad signal: low-weight escalation signal,
   // never blocks on its own. Opt-in (default off) so the zero-config Tier-0 hot path is
   // unchanged; enable via normalize.scanAdversarialSuffix.
   if (opts.scanAdversarialSuffix) reasons.push(...scanAdversarialSuffix(matchingCopy));
@@ -401,7 +401,7 @@ export function analyzeL2(
     );
   }
 
-  // PLAN.md §5 L2: decode-and-rescan is routed by an entropy / looks-encoded gate so
+  // L2: decode-and-rescan is routed by an entropy / looks-encoded gate so
   // benign prose (the >90% common path) skips it. base64/hex blobs raise entropy and
   // match the looks-encoded pattern; URL/HTML-entity payloads match their signatures.
   // ROT13-encoded text has normal entropy and no encoded signature, so a pure ROT13

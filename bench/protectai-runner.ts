@@ -1,7 +1,7 @@
 // Candidate open-model runner: protectai/deberta-v3-base-prompt-injection-v2.
 // Apache-2.0, ungated, ONNX weights published in-repo — no export tooling, no HF access
 // request, no license ambiguity (unlike meta-llama/Llama-Prompt-Guard-2, see
-// IMPROVEMENTS_PLAN.md / bench/REPORT.md). Downloaded directly from the HF hub (no local
+// bench/REPORT.md). Downloaded directly from the HF hub (no local
 // export step exists or is needed — transformers.js caches it under its own cache dir).
 //
 // Label convention: config.json publishes id2label = {0: "SAFE", 1: "INJECTION"} explicitly

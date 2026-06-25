@@ -1,4 +1,4 @@
-// opensentry/session — stateful multi-turn / session guard (PLAN.md security plan #1).
+// opensentry/session — stateful multi-turn / session guard.
 //
 // Crescendo, Bad Likert Judge, and many-shot exceed ~70% success precisely because no single
 // turn is flaggable. The core `Guard` is stateless (conversationId is only a cache/metric key).
@@ -11,7 +11,7 @@
 //   - session_escalation:  score gradient across turns exceeds escalationDelta (Crescendo).
 //   - manyshot_density:    a single turn injects many synthetic user:/assistant: example pairs.
 //
-// FP discipline (PLAN.md §4): session signals are FLAG-weighted, never hard-block.
+// FP discipline: session signals are FLAG-weighted, never hard-block.
 // `cumulativeScore` decays so a single spike doesn't poison a long benign conversation. Default
 // off the common path — only fires when you wire a SessionGuard.
 //

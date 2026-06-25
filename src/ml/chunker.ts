@@ -1,5 +1,5 @@
 // Text chunking for Tier 1 ML — Llama-Prompt-Guard-2 has a 512-token input limit.
-// PLAN.md §5: "inputs >512 tok chunked in parallel with max-aggregate".
+// "inputs >512 tok chunked in parallel with max-aggregate".
 // We use a rough char-based token estimate (~4 chars/token for English) and split
 // on sentence boundaries first, then hard-split if a single sentence exceeds the limit.
 

@@ -1,5 +1,5 @@
 // opensentry/onnx — Tier 1 local ML for Node (native ONNX runtime).
-// PLAN.md §5: "onnxruntime-node for Node". Uses @huggingface/transformers for tokenization
+// "onnxruntime-node for Node". Uses @huggingface/transformers for tokenization
 // + inference with the native ONNX backend. Edge bundles never pull this subpath.
 //
 // Requires peer dependencies:

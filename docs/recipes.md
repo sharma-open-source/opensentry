@@ -270,7 +270,7 @@ const egress = egressFilter(modelOutput, { allowlist: URL_ALLOWLIST, scanSecrets
 const leak = detectCanaryLeak(modelOutput, [canary]);
 ```
 
-This is the shape PLAN.md §11 recommends — `opensentry` is **one layer** among the
+This is the shape the design recommends — `opensentry` is **one layer** among the
 companions. Also ship least-privilege tool scoping and human approval for genuinely
 high-risk actions in your runtime; consider the dual-LLM / quarantined-privileged
 pattern for agentic systems (the injectable model holds no authority).

@@ -1,5 +1,5 @@
 // opensentry/wasm — Tier 1 local ML for edge (WASM SIMD/threads).
-// PLAN.md §5: "transformers.js / onnxruntime-web (WASM SIMD/threads) for edge — so edge
+// "transformers.js / onnxruntime-web (WASM SIMD/threads) for edge — so edge
 // bundles never pull onnxruntime-node". Uses @huggingface/transformers with the WASM backend.
 //
 // Requires peer dependency:

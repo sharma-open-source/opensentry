@@ -285,7 +285,7 @@ repo/local export's `onnx/` directory. If a model repo only ships fp32 (no quant
 variant — true of `meta-llama/Llama-Prompt-Guard-2-22M/86M` themselves, since they're
 PyTorch-only and gated, with no published ONNX build at all), you need to produce one
 yourself, e.g. via `onnxruntime.quantization.quantize_dynamic` — see
-[bench/REPORT.md](bench/REPORT.md#quantization-improvements_planmd-item-3) for the exact
+[bench/REPORT.md](bench/REPORT.md) for the exact
 command and a measured fp32-vs-quantized accuracy/latency comparison.
 
 ### Usage — Node
@@ -740,7 +740,7 @@ a third more missed attacks. Full numbers: **[bench/REPORT.md](bench/REPORT.md#o
 
 ## Companions
 
-Zero-dep defense-in-depth utilities that ride on Tier 0 (PLAN.md §11a).
+Zero-dep defense-in-depth utilities that ride on Tier 0.
 
 ### Spotlight — `opensentry/spotlight`
 
@@ -866,7 +866,7 @@ export async function POST(req: Request) {
 
 ## Security hardening
 
-The gaps a stateless single-message filter *structurally cannot see* — each shipped default-off or behind a new subpath so the zero-config Tier-0 path is unchanged. See [`SECURITY_FEATURES_PLAN.md`](SECURITY_FEATURES_PLAN.md).
+The gaps a stateless single-message filter *structurally cannot see* — each shipped default-off or behind a new subpath so the zero-config Tier-0 path is unchanged.
 
 ### Canary — `opensentry/canary`
 

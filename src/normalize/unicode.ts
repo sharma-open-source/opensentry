@@ -1,5 +1,5 @@
 // Unicode character classification + single-pass cleaning for L1 normalization.
-// PLAN.md §5 L1: strip+count invisible/variation-selectors/C0-C1, hard-flag Tag block,
+// L1: strip+count invisible/variation-selectors/C0-C1, hard-flag Tag block,
 // strip/isolate bidi controls. Pure arithmetic over code units — no allocations beyond
 // the output string. Edge-safe (no Node builtins).
 
@@ -125,7 +125,7 @@ export function collapseWhitespace(s: string): string {
   return s.replace(CR, '\n').replace(HWS_RUN, ' ');
 }
 
-// Fast UTF-8 byte length without allocating a TextEncoder buffer (PLAN.md L0: no
+// Fast UTF-8 byte length without allocating a TextEncoder buffer (L0: no
 // hot-path allocation). O(n) arithmetic over code units.
 export function utf8ByteLength(s: string): number {
   let n = 0;

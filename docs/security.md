@@ -3,8 +3,7 @@
 The gaps a stateless single-message filter *structurally cannot see* — each shipped
 **default-off or behind a new subpath** so the zero-config Tier-0 path, the CI gates
 (benign FPR < 1%, NotInject < 5%, attack recall ≥ 90%, hard-block 100%, Tier 0 p99 <
-1ms), and the eval corpora are all unchanged. See `SECURITY_FEATURES_PLAN.md` for the
-full design rationale.
+1ms), and the eval corpora are all unchanged.
 
 For the companion-based hardening (canary, taint, session), see
 [Companions](./companions.md). This page covers the Tier-0/Tier-1 detection upgrades.
@@ -70,7 +69,7 @@ prefixes or model names that risk flagging benign mentions.
 
 `normalize.scanAdversarialSuffix` (default `false`) → low-weight `adversarial_suffix`.
 A **zero-LM proxy** for optimizer-generated (GCG) suffixes: optimizer suffixes read as
-garbage to humans but flip models. PLAN.md deliberately excluded perplexity (no LM on
+garbage to humans but flip models. The design deliberately excluded perplexity (no LM on
 the hot path) — this is a near-free proxy instead.
 
 ```ts

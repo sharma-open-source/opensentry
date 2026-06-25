@@ -1,4 +1,4 @@
-// opensentry/remote — Tier 2 reference adapters (PLAN.md §5 Tier 2, §6).
+// opensentry/remote — Tier 2 reference adapters.
 // opensentry ships NO vendor SDKs in core. These are thin, optional adapters that
 // turn a `fetch`-reachable HTTP guard/judge endpoint into a `RemoteGuardProvider`. Nothing
 // is sent off-box unless the caller explicitly constructs one of these and wires it into
@@ -11,7 +11,7 @@
 //                                   (Llama-Guard / Prompt-Guard-2 on Groq, Together, etc.),
 //                                   using an LLM-as-judge prompt. Untrusted content is
 //                                   spotlight-delimited before being embedded in the prompt
-//                                   (PLAN.md §5 Tier 2 caveat: "untrusted content sent to it
+//                                   (Tier 2 caveat: "untrusted content sent to it
 //                                   is spotlight-delimited").
 
 import { spotlight } from '../spotlight/index.js';
@@ -114,7 +114,7 @@ function parseJudgeContent(content: string): { score: number; label: string } {
 
 // LLM-as-judge adapter for OpenAI-chat-compatible endpoints (Groq, Together, Bedrock
 // access gateways, etc.) hosting a guard model such as Llama-Guard or Prompt-Guard-2.
-// The judge's own output is itself an LLM call — per PLAN.md §5 it must stay "one
+// The judge's own output is itself an LLM call — it must stay "one
 // weighted signal, never an unconditional block", which is enforced by the score-folding
 // in guard.check(), not by this adapter.
 export function createLlamaGuardChatProvider(

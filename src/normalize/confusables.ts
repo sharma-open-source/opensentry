@@ -1,6 +1,6 @@
 // Compact curated subset of UTS-39 confusables covering the high-impact cross-script
 // look-alikes that NFKC does NOT fold (Cyrillic/Greek letters resembling ASCII letters).
-// Applied to the MATCHING copy only — NEVER the model copy (PLAN.md §4.1, risk R4).
+// Applied to the MATCHING copy only — NEVER the model copy (risk R4).
 //
 // NFKC already folds fullwidth (U+FF01–FF5E) and Mathematical Alphanumeric Symbols
 // (U+1D400–1D7FF) to ASCII, so this table only needs the visually-confusable-but-

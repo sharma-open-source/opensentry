@@ -39,7 +39,7 @@ export class GuardBlockError extends Error {
 
 const DEFAULT_SOURCE: Source = 'user';
 
-// PLAN.md security plan #2 — neutralize encoded payloads in the MODEL copy. When a decoded
+// Neutralize encoded payloads in the MODEL copy. When a decoded
 // blob re-scanned as injection, either strip it or spotlight-wrap it (datamark) so it reads as
 // inert data. The MATCHING copy is never touched (R4 two-copy invariant); only `sanitized`
 // (the model copy) is rewritten. Best-effort: the blob is located by literal substring match,
@@ -105,7 +105,7 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): 
 }
 
 // Run ML classification on text, chunking if >512 tokens. Chunks run in parallel;
-// the max malicious score across chunks is taken (most conservative — PLAN.md §5).
+// the max malicious score across chunks is taken (most conservative).
 async function classifyChunked(
   runner: { classify(text: string): Promise<LocalModelResult> },
   text: string,
@@ -132,7 +132,7 @@ async function classifyChunked(
   };
 }
 
-// SmoothLLM-style perturbation (PLAN.md security plan #7): lightly perturb the input by
+// SmoothLLM-style perturbation: lightly perturb the input by
 // dropping/swapping chars with probability `p`. Adversarial suffixes (GCG) are tuned to an
 // exact string and are brittle to perturbation; benign text is not. Single O(n) pass.
 function perturb(text: string, p: number): string {
@@ -275,7 +275,7 @@ export function createGuard(config?: GuardConfig): Guard {
 
     const reasons: Reason[] = [...l0.reasons, ...l1.reasons, ...l2.reasons, ...l3];
 
-    // Neutralize encoded payloads in the model copy (PLAN.md security plan #2). Default 'off'
+    // Neutralize encoded payloads in the model copy. Default 'off'
     // → no-op, fully backward compatible. Only fires on blobs that themselves re-scan as
     // injection; benign base64 (images, hashes) is untouched.
     let sanitized = l1.modelCopy;
@@ -421,7 +421,7 @@ export function createGuard(config?: GuardConfig): Guard {
   }
 
   // Build a degraded result from the current verdict when a higher tier fails (circuit
-  // open, timeout, provider error). PLAN.md §5: "on error/timeout fall back to [prior]
+  // open, timeout, provider error). "on error/timeout fall back to [prior]
   // verdict + degraded flag (hard rules still fire)". If the source failMode is 'closed',
   // the flag band escalates to block (fail-closed — can't verify safety without that tier).
   function degradedResult(
@@ -458,11 +458,11 @@ export function createGuard(config?: GuardConfig): Guard {
     return result;
   }
 
-  // Tier 2 escalation (PLAN.md §5 Tier 2): fired only when still borderline after Tier 1
+  // Tier 2 escalation: fired only when still borderline after Tier 1
   // (or Tier 0 if no Tier 1 is configured) or when gating a highRiskAction (pre-tool-call /
   // pre-egress). Never synchronous on the common path. The judge's own output is itself
   // injectable/nondeterministic, so it is folded as ONE weighted signal, never an
-  // unconditional block (PLAN.md §5 Tier 2 caveat). Untrusted content is spotlight-delimited
+  // unconditional block. Untrusted content is spotlight-delimited
   // before being handed to the provider.
   async function escalateToRemote(
     current: GuardResult,
@@ -544,7 +544,7 @@ export function createGuard(config?: GuardConfig): Guard {
 
     try {
       const runner = await getRunner(detector);
-      // SmoothLLM-style consensus (PLAN.md security plan #7): only on highRiskAction so the
+      // SmoothLLM-style consensus: only on highRiskAction so the
       // n× latency/FP cost stays off the common path. Adversarial suffixes are brittle to
       // perturbation; benign text is not.
       const mlResult =
@@ -555,7 +555,7 @@ export function createGuard(config?: GuardConfig): Guard {
 
       // Score folding: ML malicious probability → Reason → re-aggregate via noisy-OR →
       // re-decide verdict. The ML score is one weighted signal, never a replacement for
-      // Tier 0 evidence (PLAN.md §5: "folded into the score, does not replace Tier-0 evidence").
+      // Tier 0 evidence ("folded into the score, does not replace Tier-0 evidence").
       //
       // minConfidence floors out low-confidence scores before folding (see types.ts) — the
       // global flag/block thresholds are tuned against Tier 0's evidence, not this model's
@@ -600,7 +600,7 @@ export function createGuard(config?: GuardConfig): Guard {
     }
   }
 
-  // Embedding-similarity ensemble (PLAN.md §5/§12 Phase 4 "optional embedding-similarity
+  // Embedding-similarity ensemble ("optional embedding-similarity
   // ensemble"): compares the input against a reference corpus of canonical attack phrases via
   // BYO `embed`. Same escalation gate, score-folding, circuit breaker, and degraded-fallback
   // shape as the other tiers — folded as one weighted signal, never a replacement. Grouped with
@@ -671,7 +671,7 @@ export function createGuard(config?: GuardConfig): Guard {
   }
 
   // Full async pipeline chaining Tier 0 -> conditional Tier 1 (ML) -> conditional Tier 2
-  // (remote guard). PLAN.md §5:
+  // (remote guard):
   // - Tier 1 fires on the uncertain band (flag) or alwaysEscalate sources, folds its
   //   probability into the score via noisy-OR (never replaces Tier 0 evidence).
   // - Tier 2 fires only when still borderline after Tier 1 (or after Tier 0 if no Tier 1
@@ -765,14 +765,14 @@ export function createGuard(config?: GuardConfig): Guard {
     },
 
     async checkMessages(messages: { role: Source; content: string }[]): Promise<GuardResult[]> {
-      // PLAN.md §6: scores each message per its source role; skips the trusted system
+      // Scores each message per its source role; skips the trusted system
       // prompt (handled by the per-source skip policy → verdict 'allow'). Uses guard.check
       // so future async tiers (Phase 3/4) are automatically engaged per message.
       return Promise.all(messages.map((msg) => guard.check(msg.content, { source: msg.role })));
     },
 
     createStreamScanner(ctx?: GuardContext) {
-      // PLAN.md §6: streaming model-output / chunked tool content. Buffers across chunk
+      // Streaming model-output / chunked tool content. Buffers across chunk
       // boundaries so split injection tokens are caught (e.g. "<|im_st" + "art|>").
       // Supports early-abort: abort=true when the enforced verdict reaches 'block'.
       // Uses runTier0 (no cache) for incremental pushes to avoid polluting the LRU with
@@ -815,13 +815,13 @@ export function createGuard(config?: GuardConfig): Guard {
       return wrapped;
     },
 
-    // Tool-call guard (PLAN.md §11a, §5 Tier 2): least-privilege assist — scans the
+    // Tool-call guard: least-privilege assist — scans the
     // call's args through the full pipeline and enforces an allowlist of tool names
     // BEFORE execution. highRiskAction is forced so the flag band fails closed (and,
     // if a remote/local tier is configured, escalates rather than passing silently).
     // The privilege model itself (what a tool is actually allowed to do) stays in your runtime.
     //
-    // PLAN.md security plan #3: when an opts.tracker is provided and the args contain
+    // When an opts.tracker is provided and the args contain
     // untrusted-origin text, emit tainted_data_flow and fail closed (highRiskAction is already
     // forced here, so the flag band escalates to block). This is policy, not a classifier →
     // low FP. No effect unless a tracker is wired.

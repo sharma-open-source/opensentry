@@ -1,7 +1,7 @@
 import { isHardBlock } from './config.js';
 import type { Mode, Reason, ReasonCode, Thresholds, Verdict } from './types.js';
 
-// PLAN.md §4.2 — score is aggregated weighted evidence via noisy-OR (probabilistic OR):
+// Score is aggregated weighted evidence via noisy-OR (probabilistic OR):
 //   score = 1 - ∏(1 - w_i)
 // Bounded [0,1]; a single weight of 1 ⇒ score 1; multiple mid signals combine upward.
 // This is the "max-aggregate": it is ≥ the max weight and respects every detector.
@@ -22,7 +22,7 @@ export interface VerdictDecision {
   hardBlockTriggered: boolean;
 }
 
-// PLAN.md §4.2, §4.5, §4.6, §7 — verdict resolution.
+// Verdict resolution.
 //  - hard-block floor fires even in fail-open (deterministic high-confidence set).
 //  - highRiskAction ⇒ fail-closed: uncertain 'flag' escalates to 'block' (Phase 1 has no
 //    higher tier to escalate to; Phase 3/4 will route to ML/remote/HITL instead).

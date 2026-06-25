@@ -1,4 +1,4 @@
-// opensentry/spotlight — Microsoft Spotlighting companion (PLAN.md §11a).
+// opensentry/spotlight — Microsoft Spotlighting companion.
 // Makes untrusted content unmistakably "data, not instructions" so a successful
 // injection cannot forge the channel boundary. Three modes:
 //   - delimit:  wrap in a random, unpredictable delimiter (best for raw text)

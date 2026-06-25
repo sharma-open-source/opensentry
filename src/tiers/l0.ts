@@ -9,7 +9,7 @@ export interface L0Output {
   reasons: Reason[];
 }
 
-// PLAN.md §5 L0 — front gate. Pure arithmetic over raw chars; no hot-path allocation.
+// L0 — front gate. Pure arithmetic over raw chars; no hot-path allocation.
 // Bounds downstream work (maxScanBytes truncate-with-flag) + crude flooding signals.
 // Never blocks alone (resource reasons carry low weight, not in hard-block set).
 export function frontGate(input: string, opts: ResolvedNormalize): L0Output {

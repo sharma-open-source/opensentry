@@ -1,7 +1,7 @@
 import type { LocalModelDetector, LocalModelRunner } from '../types.js';
 
 // Warm singleton — loads the ML runner once and reuses it across all guard instances.
-// PLAN.md §5: "Warm singleton session, int8 weights, graph opts".
+// "Warm singleton session, int8 weights, graph opts".
 // The runner is loaded lazily on first check() that requires escalation, or proactively
 // via warmOnBoot. The promise is cached so concurrent callers share the same load.
 

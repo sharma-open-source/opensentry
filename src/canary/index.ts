@@ -1,4 +1,4 @@
-// opensentry/canary — canary tokens for system-prompt-leak detection (PLAN.md security plan #4).
+// opensentry/canary — canary tokens for system-prompt-leak detection.
 //
 // System-prompt extraction is currently caught only heuristically (L3 regex). A canary makes
 // leakage DETERMINISTIC and near-zero-FP: inject an unguessable nonce into the system prompt;

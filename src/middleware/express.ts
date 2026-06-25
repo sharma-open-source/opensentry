@@ -1,4 +1,4 @@
-// opensentry/express — Express-style middleware adapter (PLAN.md §6, §12 Phase 2).
+// opensentry/express — Express-style middleware adapter.
 // Scans a body field through the guard; blocks (400) or sanitizes and calls next().
 // Uses structural typing so no @types/express dependency is needed. Also works with
 // Next.js Pages Router (same req/res/next shape).

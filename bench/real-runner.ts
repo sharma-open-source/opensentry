@@ -5,7 +5,7 @@
 // Label convention: the exported config.json carries no id2label (verified against the
 // raw upstream config.json — Meta's card example assumes a mapping that isn't actually in
 // the repo's config). MALICIOUS_LABEL below was fixed empirically against known attack/benign
-// text (see IMPROVEMENTS_PLAN.md) rather than guessed from docs.
+// text rather than guessed from docs.
 //
 // dtype defaults to 'fp32' (matches the original model.onnx export). Pass 'q8' to load
 // model_quantized.onnx instead (produced via onnxruntime.quantization.quantize_dynamic —

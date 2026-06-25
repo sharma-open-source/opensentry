@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-### Added — security hardening (from `SECURITY_FEATURES_PLAN.md`)
+### Added — security hardening
 
 The gaps a stateless single-message filter structurally cannot see. **Every item ships default-off or behind a new subpath — the zero-config Tier-0 path, the CI gates (benign FPR < 1%, NotInject < 5%, attack recall ≥ 90%, hard-block 100%, Tier 0 p99 < 1ms), and the eval corpora are all unchanged.** 257 unit tests (+66), perf SLA and eval gates still green.
 

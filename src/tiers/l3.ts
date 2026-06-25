@@ -1,11 +1,11 @@
 import { clamp01, mkReason } from '../reason.js';
 import type { Reason, ReasonCategory, ReasonCode } from '../types.js';
 
-// PLAN.md §5 L3 — structural & heuristic regex. Pre-compiled at module load,
+// L3 — structural & heuristic regex. Pre-compiled at module load,
 // backtracking-safe (linear): quantifiers only apply to character classes or fixed
 // alternations; no nested quantifiers. Runs on the normalized MATCHING copy (casefolded).
 //
-// Per PLAN.md §5/§7: keyword-only matches get LOW weight (NotInject over-defense risk);
+// Keyword-only matches get LOW weight (NotInject over-defense risk);
 // structural template / exfil matches get HIGH weight (some are hard-block).
 
 interface Spec {

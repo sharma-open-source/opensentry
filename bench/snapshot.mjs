@@ -1,5 +1,5 @@
 // Copies the latest bench/report.json into bench/history/<date>.json so regressions are
-// visible over time (IMPROVEMENTS_PLAN.md item 4). Run after `pnpm bench`, before a release.
+// visible over time. Run after `pnpm bench`, before a release.
 // Unlike bench/report.json (gitignored, regenerated every run), bench/history/*.json files
 // are meant to be committed — that's the whole point of tracking history.
 import { copyFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';

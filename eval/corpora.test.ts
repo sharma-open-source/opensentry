@@ -2,7 +2,7 @@ import { test, expect } from 'vitest';
 import { evaluate } from '../corpus/eval.js';
 import { GATES } from '../corpus/gates.js';
 
-test('corpora release gates pass (PLAN.md §0/§7/§8)', () => {
+test('corpora release gates pass', () => {
   const r = evaluate();
   // Visible report for CI debugging.
   const log = {

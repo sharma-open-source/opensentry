@@ -12,10 +12,10 @@ function p99(samples: number[]): number {
   return sorted[idx] ?? 0;
 }
 
-// PLAN.md §8: Tier 0 p99 < 1ms on a few-KB input (CI-enforced hard SLA).
+// Tier 0 p99 < 1ms on a few-KB input (CI-enforced hard SLA).
 // Inputs are varied per iteration so the LRU cache never serves a hit — this measures
 // the real L0→L1→L2→L3 pipeline (including the always-on decode/ROT13 rescan).
-describe('Tier 0 p99 < 1ms SLA (PLAN.md §8)', () => {
+describe('Tier 0 p99 < 1ms SLA', () => {
   const guard = createGuard();
 
   function measure(makeText: (i: number) => string, iters: number): number[] {

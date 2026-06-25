@@ -1,10 +1,10 @@
-// opensentry/egress — outbound exfiltration filter (PLAN.md §11a + security plan #5).
+// opensentry/egress — outbound exfiltration filter.
 // Scans model output / tool-call results for:
 //   - disallowed URLs (markdown-image exfil lures, bare URLs) against a caller allowlist,
 //   - leaked secrets (known key shapes + high-entropy token runs) → secret_egress,
 //   - PII (email/phone/card/SSN, or caller patterns) → pii_egress.
 //
-// FP discipline (plan #5): output-side, so secret/PII default to FLAG-not-block (blocking a
+// FP discipline: output-side, so secret/PII default to FLAG-not-block (blocking a
 // response is costly). URL exfil stays hard-block. `scanPii` defaults OFF (locale-sensitive).
 // Zero Node builtins — pure string + regex + the shared Shannon-entropy helper.
 
@@ -277,7 +277,7 @@ export function egressFilter(text: string, policy: EgressPolicy): EgressResult {
     }
   }
 
-  // Secret / PII scanning (plan #5). Flag-weighted, not hard-block.
+  // Secret / PII scanning. Flag-weighted, not hard-block.
   reasons.push(...scanSecrets(text, policy));
   reasons.push(...scanPii(text, policy));
 

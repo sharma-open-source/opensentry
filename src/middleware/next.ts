@@ -1,4 +1,4 @@
-// opensentry/next — Next.js App Router middleware adapter (PLAN.md §6, §12 Phase 2).
+// opensentry/next — Next.js App Router middleware adapter.
 // Scans a JSON body field through the guard. Returns a 400 Response if blocked, or null
 // if allowed (the caller continues to the route handler). Uses Web Request/Response
 // (edge-compatible). For Pages Router, use opensentry/express (same req/res/next shape).

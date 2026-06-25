@@ -182,8 +182,7 @@ describe('ML escalation gate', () => {
 });
 
 // ============================================================================
-// minConfidence — floors out low-confidence ML scores before folding (item 2,
-// IMPROVEMENTS_PLAN.md). Default 0 (no change); set per-detector to calibrate against a
+// minConfidence — floors out low-confidence ML scores before folding. Default 0 (no change); set per-detector to calibrate against a
 // specific model's score distribution without touching Tier 0's global thresholds.
 // ============================================================================
 
@@ -611,7 +610,7 @@ describe('warmOnBoot', () => {
 });
 
 // ============================================================================
-// SmoothLLM-style consensus (PLAN.md security plan #7)
+// SmoothLLM-style consensus
 // ============================================================================
 
 describe('ML smoothing (SmoothLLM-style consensus, plan #7)', () => {

@@ -1,4 +1,4 @@
-// Public type surface of opensentry — locked per PLAN.md §6.
+// Public type surface of opensentry.
 // Pure types only; no runtime here so it is side-effect free and tree-shakeable.
 
 export type Verdict = 'allow' | 'flag' | 'block';
@@ -100,7 +100,7 @@ export interface HeuristicsDetector {
   kind: 'heuristics';
 } // Tier 0, sync, always edge-safe
 
-// PLAN.md §5 Tier 1 — local ML classifier result (Llama-Prompt-Guard-2-22M/86M).
+// Tier 1 — local ML classifier result (Llama-Prompt-Guard-2-22M/86M).
 export interface LocalModelResult {
   score: number; // 0..1 — probability the text is injection/malicious
   label: 'benign' | 'injection';
@@ -131,7 +131,7 @@ export interface LocalModelDetector {
   // value from your own corpus via bench/metrics.ts's recallAtFpr sweep — this is model- and
   // export-specific, there is no universal default.
   minConfidence?: number;
-  // SmoothLLM-style consensus (PLAN.md robustness hardening): when highRiskAction is set,
+  // SmoothLLM-style consensus: when highRiskAction is set,
   // run `n` lightly-perturbed copies through the classifier and take the majority/mean.
   // Adversarial suffixes (GCG) are brittle to perturbation; benign text is not. Stays off
   // the common (non-high-risk) path. Default off.
@@ -246,7 +246,7 @@ export interface Guard {
   // Tool-call guard (least-privilege assist): scan args through the pipeline + enforce an
   // allowlist of tools/arg-shapes BEFORE execution. (Phase 4)
   // The optional `opts.tracker` (opensentry/taint) emits `tainted_data_flow` and fails closed
-  // when untrusted-origin text reaches a privileged tool call (PLAN.md security plan #3).
+  // when untrusted-origin text reaches a privileged tool call.
   checkToolCall(
     call: { name: string; args: unknown },
     policy: { allow: Record<string, unknown> },

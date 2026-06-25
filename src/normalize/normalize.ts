@@ -21,7 +21,7 @@ function isPureAscii(s: string): boolean {
   return true;
 }
 
-// PLAN.md §5 L1 — the load-bearing normalization layer.
+// L1 — the load-bearing normalization layer.
 // Produces two copies: an aggressively-folded MATCHING copy (scored by detectors) and a
 // minimally-cleaned MODEL copy (passed downstream). Confusable folding NEVER touches the
 // model copy (risk R4 — would corrupt legitimate CJK/Arabic/emoji).
