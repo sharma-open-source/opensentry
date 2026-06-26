@@ -22,6 +22,7 @@ export const DEFAULT_FAIL_MODE: 'open' | 'closed' = 'open';
 export const DEFAULT_HARD_BLOCK_RULES: readonly ReasonCode[] = [
   'unicode_tag_smuggling', // U+E0000–E007F Tag block — zero legitimate use
   'exfil_markdown_image', // markdown-image exfil lure
+  'exfil_url_lure', // link/HTML/CSS/bare-URL exfil lure carrying a data probe
   'template_forgery', // forged chat-template / turn markers
 ];
 

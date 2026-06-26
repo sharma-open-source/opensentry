@@ -23,6 +23,7 @@ export type ReasonCode =
   | 'instruction_override'
   | 'policy_puppetry'
   | 'exfil_markdown_image'
+  | 'exfil_url_lure'
   | 'refusal_suppression'
   | 'agentic_tool_hijack'
   | 'indirect_marker'
