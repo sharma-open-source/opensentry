@@ -1,5 +1,5 @@
 import { hashStr, LRU } from './cache.js';
-import { resolveConfig, resolveSourcePolicy } from './config.js';
+import { isHardBlock, resolveConfig, resolveSourcePolicy } from './config.js';
 import { DEFAULT_ATTACK_CORPUS, embeddingMatchScore } from './embedding/index.js';
 import { chunkText } from './ml/chunker.js';
 import { CircuitBreaker } from './ml/circuit-breaker.js';
@@ -34,6 +34,18 @@ export class GuardBlockError extends Error {
     super('opensentry: input blocked by guard');
     this.name = 'GuardBlockError';
     this.result = result;
+  }
+}
+
+// Defensive assertion for callers: `source: 'system'` is a TRUSTED bypass that skips scoring
+// (only the deterministic hard-block set still fires). Mis-attributing retrieved/RAG/web/email
+// content to `system` silently disables the guard. Call this near the boundary where untrusted
+// content enters to fail fast on the trust-boundary footgun rather than smuggling it through.
+export function assertUntrustedSource(ctx: { source?: Source }): void {
+  if (ctx?.source === 'system') {
+    throw new Error(
+      "opensentry assertUntrustedSource: source 'system' is a trusted bypass — never attribute untrusted-origin content to it; use 'user'/'retrieved'/'web'/'email' instead.",
+    );
   }
 }
 
@@ -247,22 +259,42 @@ export function createGuard(config?: GuardConfig): Guard {
     const source: Source = ctx?.source ?? DEFAULT_SOURCE;
     const sp = resolveSourcePolicy(cfg, source);
 
-    // Trusted system prompt: never scored as an attack, but still sanitized.
+    // Trusted system prompt: never scored as an attack, but still sanitized. We deliberately
+    // do NOT score it — BUT we still run the deterministic hard-block set (forged chat
+    // templates / Tag block / exfil URL lures). Trust is about content origin, not a license to
+    // smuggle control tokens: a forged `<|im_start|>` in a "system" message must still trip.
+    // Re-uses the already-computed L0+L1 normalizations and L3 regex only (the hard-block rules
+    // are all emitted by L0/L1 clean counts + L3 specs), so the expensive L2 decode-rescan is
+    // skipped — this stays cheap and can only escalate (never warns about benign trust content).
     if (sp.skip) {
-      const l1 = normalizeInput(input, cfg.normalize, ctx?.locale);
+      const l0 = frontGate(input, cfg.normalize);
+      const l1 = normalizeInput(l0.text, cfg.normalize, ctx?.locale);
+      const l3 = scanRegex(l1.matchingCopy);
+      const hbReasons: Reason[] = [...l0.reasons, ...l1.reasons, ...l3].filter(
+        (r) => r.hardBlock === true || isHardBlock(r.code, cfg.hardBlockRules),
+      );
+      const score = aggregateScore(hbReasons);
+      const decision = decideVerdict(
+        score,
+        hbReasons,
+        sp.thresholds,
+        cfg.hardBlockRules,
+        cfg.mode,
+        ctx?.highRiskAction ?? false,
+      );
       const latencyMs = nowMs() - t0;
       const result: GuardResult = {
-        verdict: 'allow',
-        wouldVerdict: 'allow',
-        score: 0,
-        reasons: [],
+        verdict: decision.verdict,
+        wouldVerdict: decision.wouldVerdict,
+        score,
+        reasons: hbReasons,
         sanitized: l1.modelCopy,
         normalized: l1.matchingCopy,
-        truncated: false,
+        truncated: l0.truncated,
         tier: 0,
         source,
-        shadow: cfg.mode === 'shadow',
-        mode: cfg.mode,
+        shadow: decision.shadow,
+        mode: decision.mode,
         latencyMs,
       };
       return result;

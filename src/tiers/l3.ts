@@ -109,6 +109,27 @@ const SPECS: Spec[] = [
     cap: 1.0,
     re: /(!\[[^\]]*\]\(https?:\/\/[^)\s]*\?[^)\s]*\)|!\[[^\]]*\]\(javascript:[^)\s]*\)|\[[^\]]*\]\(javascript:[^)\s]*\))/g,
   },
+  // ---- Exfiltration lures: any URL-bearing channel carrying a data probe (HIGH, hard-block) ----
+  // Catches markdown links, HTML <img>/<script>/<iframe>/<a href>, CSS url(), bare URLs, and JS
+  // exfil alike: a URL with a query/fragment containing a high-signal data keyword, or a JS
+  // document.* / in-script fetch() reach. The query-qualifier keeps benign image/CDN URLs and
+  // OAuth callbacks off the trigger — deliberately NOT extended to a bare structural match for
+  // <iframe>/CSS url() (e.g. a YouTube embed or a CDN background-image): those are common in
+  // legitimate retrieved/web content and a keyword-free hard-block on them is a worse outcome
+  // than the narrow generic-param-name gap (?d=data, ?d=token) it would close. Gated behind the
+  // combined pre-check so prose (no `https`) pays nothing. Linear patterns (char-class
+  // quantifiers, no nesting).
+  {
+    name: 'exfil_url_lure',
+    code: 'exfil_url_lure',
+    category: 'exfil',
+    weight: 0.9,
+    hardBlock: true,
+    label: 'exfiltration URL lure (link/HTML/CSS/bare-URL)',
+    perMatchBoost: 0.05,
+    cap: 1.0,
+    re: /(?:https?:\/\/[^\s)'"]*[?#][^\s)'"]*\b(?:secret|cookie|password|credential|exfil|leak|api[-_]?key|apikey|sessionid|ssn)\b|\bdocument\.(?:cookie|location)\b|<script\b[^>]*>[^<]{0,200}\bfetch\s*\(\s*["']https?:\/\/|<script\b[^>]*\bsrc\s*=\s*["']?https?:\/\/)/g,
+  },
   // ---- Refusal suppression / affirmative priming (MED) ----
   {
     name: 'refusal_suppression',

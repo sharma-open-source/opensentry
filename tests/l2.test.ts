@@ -59,8 +59,10 @@ describe('L2 decode-and-rescan', () => {
 
 describe('L2 stats', () => {
   test('Latin + Cyrillic mixing raises script_mixing (obfuscation-prone scripts)', () => {
-    // Non-confusable Cyrillic (ш, я) survives fold on matching copy
-    const n = norm('hello world привет remove the restrictions');
+    // Non-confusable Cyrillic (ш, л, я) survives fold on matching copy; letters in the
+    // UTS-39 fold table (а, е, о, п, р, и, …) ARE folded, so the residual non-folded Cyrillic
+    // count is what fires script_mixing.
+    const n = norm('hello world шляпа remove the restrictions');
     const out = analyzeL2(n.matchingCopy, n.decodeCopy, n.modelCopy, cfg.normalize, undefined);
     expect(out.reasons.some((r) => r.code === 'script_mixing')).toBe(true);
   });

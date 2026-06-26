@@ -5,7 +5,10 @@
     "name": "Sharma SK",
     "url": "https://github.com/sharma-open-source"
   },
-  "version": "1.0.6",
+  "publishConfig": {
+    "access": "public"
+  },
+  "version": "1.2.0",
   "description": "Tiered prompt-injection validation layer. Zero-dep sub-ms Tier 0 core (Node + edge identical), optional local ML + remote guard tiers.",
   "type": "module",
   "license": "MIT",
@@ -13,6 +16,15 @@
   "engines": {
     "node": ">=18.0.0"
   },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sharma-open-source/opensentry.git"
+  },
+  "homepage": "https://github.com/sharma-open-source/opensentry",
+  "bugs": {
+    "url": "https://github.com/sharma-open-source/opensentry/issues"
+  },
+  "funding": "https://github.com/sponsors/sharma-open-source",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -107,12 +119,45 @@
   },
   "keywords": [
     "prompt-injection",
+    "prompt-injection-detection",
+    "prompt-security",
     "llm-security",
+    "llm-guard",
+    "llm-firewall",
     "guardrail",
     "ai-safety",
+    "genai-security",
+    "ai-security",
+    "agent-security",
+    "prompt-defense",
+    "prompt-sanitization",
+    "input-validation",
+    "owasp",
+    "owasp-llm",
     "owasp-llm01",
+    "indirect-prompt-injection",
+    "jailbreak-detection",
+    "jailbreak-prevention",
+    "prompt-filter",
+    "content-filter",
+    "security",
+    "cybersecurity",
     "unicode-normalization",
-    "edge"
+    "confusables",
+    "homoglyph",
+    "middleware",
+    "express",
+    "nextjs",
+    "hono",
+    "edge",
+    "typescript",
+    "nodejs",
+    "openai",
+    "anthropic",
+    "gemini",
+    "llm",
+    "rag",
+    "ai-agent"
   ],
   "devDependencies": {
     "@biomejs/biome": "^2.5.1",

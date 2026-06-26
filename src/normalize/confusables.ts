@@ -11,17 +11,21 @@ export const COMPACT_CONFUSABLES: ReadonlyMap<number, string> = new Map<number, 
   [0x0430, 'a'], // а
   [0x0435, 'e'], // е
   [0x0456, 'i'], // і
+  [0x0438, 'u'], // и (Cyrillic I — UTS#39-confusable with Latin u)
   [0x043e, 'o'], // о
+  [0x043f, 'n'], // п (Cyrillic PE — UTS#39-confusable with Latin n)
   [0x0440, 'p'], // р
   [0x0441, 'c'], // с
   [0x0443, 'y'], // у
   [0x0445, 'x'], // х
+  [0x0433, 'r'], // г (Cyrillic GE — UTS#39-confusable with Latin r)
   [0x0458, 'j'], // ј
   [0x0455, 's'], // ѕ
   [0x04bb, 'h'], // һ (shha)
   // Cyrillic uppercase → ASCII
   [0x0410, 'A'], // А
   [0x0412, 'B'], // В
+  [0x0413, 'R'], // Г (Cyrillic GE — UTS#39-confusable with Latin R)
   [0x0415, 'E'], // Е
   [0x0406, 'I'], // І
   [0x0408, 'J'], // Ј
@@ -29,6 +33,7 @@ export const COMPACT_CONFUSABLES: ReadonlyMap<number, string> = new Map<number, 
   [0x041c, 'M'], // М
   [0x041d, 'H'], // Н
   [0x041e, 'O'], // О
+  [0x041f, 'N'], // П (Cyrillic PE — UTS#39-confusable with Latin N)
   [0x0420, 'P'], // Р
   [0x0421, 'C'], // С
   [0x0405, 'S'], // Ѕ
@@ -38,13 +43,20 @@ export const COMPACT_CONFUSABLES: ReadonlyMap<number, string> = new Map<number, 
   // Greek lowercase → ASCII
   [0x03b1, 'a'], // α
   [0x03b5, 'e'], // ε
+  [0x03b7, 'n'], // η (Greek ETA — UTS#39-confusable with Latin n)
   [0x03b9, 'i'], // ι
+  [0x03bc, 'u'], // μ (Greek MU — UTS#39-confusable with Latin u)
+  [0x03bd, 'v'], // ν (Greek NU — UTS#39-confusable with Latin v)
   [0x03bf, 'o'], // ο
   [0x03c1, 'p'], // ρ
+  [0x03c4, 't'], // τ (Greek TAU — UTS#39-confusable with Latin t; uppercase Τ already present)
   // Greek uppercase → ASCII
   [0x0391, 'A'], // Α
+  [0x0392, 'B'], // Β (Greek BETA — UTS#39-confusable with Latin B)
   [0x0395, 'E'], // Ε
   [0x0399, 'I'], // Ι
+  [0x039c, 'M'], // Μ (Greek MU — UTS#39-confusable with Latin M)
+  [0x039d, 'N'], // Ν (Greek NU — UTS#39-confusable with Latin N)
   [0x039f, 'O'], // Ο
   [0x03a1, 'P'], // Ρ
   [0x03a4, 'T'], // Τ
