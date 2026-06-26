@@ -16,6 +16,15 @@
   "engines": {
     "node": ">=18.0.0"
   },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sharma-open-source/opensentry.git"
+  },
+  "homepage": "https://github.com/sharma-open-source/opensentry",
+  "bugs": {
+    "url": "https://github.com/sharma-open-source/opensentry/issues"
+  },
+  "funding": "https://github.com/sponsors/sharma-open-source",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
