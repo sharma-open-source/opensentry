@@ -456,16 +456,51 @@ export function analyzeL2(
   // unchanged; enable via normalize.scanAdversarialSuffix.
   if (opts.scanAdversarialSuffix) reasons.push(...scanAdversarialSuffix(matchingCopy));
 
-  // Mixed-script: Latin + Cyrillic/Greek (the look-alike, obfuscation-prone scripts).
-  // Deliberately NOT fired for Latin+CJK/Arabic (legit bilingual) — protects R3 FPR.
-  if (scripts.latin >= 6 && (scripts.cyrillic >= 3 || scripts.greek >= 3)) {
-    const w = clamp01(0.3 + 0.03 * (scripts.cyrillic + scripts.greek));
+  // Mixed-script homoglyph signature is Latin and Cyrillic/Greek INTERLEAVED inside a single
+  // run of letters with NO separator (e.g. "Рецеnзия", "pаypаl"), NOT a document that merely
+  // contains separate Latin and Cyrillic words — legitimate bilingual text (a Russian review
+  // quoting "HTC Desire", "admin\nэкскаватор", "ai-инфлюенсер") is not an attack. We therefore
+  // accumulate maximal letter-only runs, breaking on ANY non-letter (whitespace, newline,
+  // hyphen, punctuation, digit, CJK/Arabic), and flag only a run that internally interleaves
+  // both scripts. (True homoglyph words are also already folded to Latin by L1 before this
+  // point, so a stray-script residual here is far more likely benign than an attack — hence the
+  // conservative intra-run threshold.) Deliberately NOT fired for Latin+CJK/Arabic (legit
+  // bilingual) — protects R3 FPR.
+  let mixedRuns = 0;
+  let mixedLetters = 0;
+  let runLatin = 0;
+  let runCyrGreek = 0;
+  const flushRun = () => {
+    if (runLatin >= 2 && runCyrGreek >= 2) {
+      mixedRuns++;
+      mixedLetters += runLatin + runCyrGreek;
+    }
+    runLatin = 0;
+    runCyrGreek = 0;
+  };
+  for (let i = 0; i < matchingCopy.length; i++) {
+    const c = matchingCopy.charCodeAt(i);
+    if ((c >= 97 && c <= 122) || (c >= 65 && c <= 90)) runLatin++;
+    else if (
+      (c >= 0x0430 && c <= 0x044f) ||
+      c === 0x0451 ||
+      (c >= 0x0410 && c <= 0x042f) ||
+      c === 0x0401 ||
+      (c >= 0x03b1 && c <= 0x03c9) ||
+      (c >= 0x0391 && c <= 0x03a9)
+    )
+      runCyrGreek++;
+    else flushRun();
+  }
+  flushRun();
+  if (mixedRuns >= 1) {
+    const w = clamp01(0.3 + 0.03 * mixedLetters);
     reasons.push(
       mkReason(
         'script_mixing',
         'obfuscation',
         w,
-        `mixed Latin+Cyrillic/Greek script (latin=${scripts.latin}, cyrillic=${scripts.cyrillic}, greek=${scripts.greek})`,
+        `Latin+Cyrillic/Greek interleaved within ${mixedRuns} word(s) (${mixedLetters} mixed letters)`,
       ),
     );
   }

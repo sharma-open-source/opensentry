@@ -79,7 +79,7 @@ const guard = createGuard({
 
 ### `guard.checkSync(input, ctx?): GuardResult`
 
-Sync, Tier 0 only. Throws if async detectors (localModel, remoteGuard) are configured.
+Sync, Tier 0 only. Throws if async detectors (localModel, remoteGuard, embeddingCorpus) are configured.
 
 ```ts
 const result = guard.checkSync(userInput, {
@@ -545,7 +545,7 @@ Key optimizations:
 - **Lazy-output** in `cleanInvisibles` / `foldConfusables`: return original string if nothing changed — zero allocation for clean input
 - **ASCII-skip NFKC**: NFKC is identity for ASCII, skip the `.normalize()` call entirely
 - **Single-pass combined regex**: L3 uses a `COMBINED_TEST_RE` existence pre-check — benign prose does 1 regex test instead of 12
-- **Entropy-gated decode-rescan**: base64/hex/URL/HTML-entity decoding only runs when Shannon entropy > 4.3 bits/char AND encoded-content markers are present
+- **Entropy-gated decode-rescan**: base64/hex/URL/HTML-entity decoding only runs when Shannon entropy > 4.8 bits/char OR encoded-content markers are present
 - **LRU verdict cache**: repeat inputs (same normalized hash + source) short-circuit after L1
 
 ## Configuration
@@ -642,7 +642,7 @@ The package ships three seed corpora for CI-enforced quality gates:
 
 | Corpus | Count | Purpose |
 |---|---|---|
-| `corpus/attacks.json` | 24 + 4 outOfScope | Attack recall ≥ 90%, hard-block 100% |
+| `corpus/attacks.json` | 23 + 4 outOfScope | Attack recall ≥ 90%, hard-block 100% |
 | `corpus/benign.json` | 20 | False-positive rate < 1% |
 | `corpus/notinject.json` | 25 | Over-defense rate < 5% |
 

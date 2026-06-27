@@ -69,56 +69,96 @@ export interface FoldResult {
   count: number;
 }
 
-// Fold confusables in one pass; also report how many substitutions were made so L1
-// can emit a `confusable_run` reason proportional to density. Uses lazy output building:
-// for clean input (no confusables — the common case), returns the original string without
-// allocating a copy.
+// Whitespace boundaries for token segmentation (ASCII + common Unicode spaces). Folding runs
+// before whitespace collapse, so exotic spaces are still present here — covering them keeps a
+// non-Latin word from being glued to a neighbouring Latin one and mis-scoring the token.
+function isTokenSpace(cc: number): boolean {
+  return (
+    cc === 32 ||
+    cc === 9 ||
+    cc === 10 ||
+    cc === 13 ||
+    cc === 12 ||
+    cc === 11 ||
+    cc === 0xa0 ||
+    (cc >= 0x2000 && cc <= 0x200a) ||
+    cc === 0x202f ||
+    cc === 0x205f ||
+    cc === 0x3000
+  );
+}
+
+// A Cyrillic or Greek letter that is NOT itself a confusable — i.e. proof the token is genuinely
+// written in that script (ж, ц, ш, β, γ, …), not a Latin word with a few look-alikes swapped in.
+function isNativeCyrillicOrGreek(cc: number, table: ReadonlyMap<number, string>): boolean {
+  if (table.has(cc)) return false;
+  return (cc >= 0x0400 && cc <= 0x04ff) || (cc >= 0x0370 && cc <= 0x03ff);
+}
+
+// Fold confusables; also report how many substitutions were made so L1 can emit a
+// `confusable_run` reason proportional to density.
+//
+// Token-aware: a confusable letter is only a homoglyph signal when it sits inside a
+// predominantly-LATIN token (the Cyrillic 'а' in "pаypal"). A coherent non-Latin token — a real
+// Russian/Greek word — is full of look-alikes that would ALL fold, manufacturing a false
+// `confusable_run` AND, because the residual native letters survive, a false L2 `script_mixing`
+// on otherwise-monoscript text. So we fold a token only when its Latin anchors are at least as
+// many as its native Cyrillic/Greek anchors (and it has at least one Latin anchor). Pure-ASCII /
+// clean text takes a fast no-allocation path.
 export function foldConfusables(
   s: string,
   table: ReadonlyMap<number, string> = COMPACT_CONFUSABLES,
 ): FoldResult {
   if (s.length === 0) return { text: s, count: 0 };
+
+  // Fast path: no confusables anywhere → return original untouched (covers all clean text).
+  let hasConfusable = false;
+  for (let i = 0; i < s.length; i++) {
+    if (table.has(s.charCodeAt(i))) {
+      hasConfusable = true;
+      break;
+    }
+  }
+  if (!hasConfusable) return { text: s, count: 0 };
+
   let out = '';
-  let outStarted = false;
   let count = 0;
-  for (let i = 0; i < s.length; ) {
-    const code = s.charCodeAt(i);
-    const sub = table.get(code);
-    if (sub !== undefined) {
-      if (!outStarted) {
-        out = s.slice(0, i);
-        outStarted = true;
-      }
-      out += sub;
-      count++;
+  const n = s.length;
+  let i = 0;
+  while (i < n) {
+    const c0 = s.charCodeAt(i);
+    if (isTokenSpace(c0)) {
+      out += s[i] as string;
       i++;
       continue;
     }
-    // Handle surrogate pairs for astral code points (none in the compact table, but
-    // keep this correct so future tables with astral entries work).
-    if (code >= 0xd800 && code <= 0xdbff && i + 1 < s.length) {
-      const low = s.charCodeAt(i + 1);
-      if (low >= 0xdc00 && low <= 0xdfff) {
-        const cp = 0x10000 + ((code - 0xd800) << 10) + (low - 0xdc00);
-        const sub2 = table.get(cp);
-        if (sub2 !== undefined) {
-          if (!outStarted) {
-            out = s.slice(0, i);
-            outStarted = true;
-          }
-          out += sub2;
-          count++;
-          i += 2;
-          continue;
-        }
-        if (outStarted) out += s.slice(i, i + 2);
-        i += 2;
-        continue;
-      }
+    // Scan the whole non-space token first so the fold decision sees its full script makeup.
+    let j = i;
+    let latinAnchors = 0;
+    let nativeAnchors = 0;
+    while (j < n && !isTokenSpace(s.charCodeAt(j))) {
+      const c = s.charCodeAt(j);
+      if ((c >= 65 && c <= 90) || (c >= 97 && c <= 122)) latinAnchors++;
+      else if (isNativeCyrillicOrGreek(c, table)) nativeAnchors++;
+      j++;
     }
-    if (outStarted) out += s[i] as string;
-    i++;
+    const token = s.slice(i, j);
+    if (latinAnchors >= 1 && latinAnchors >= nativeAnchors) {
+      for (let k = 0; k < token.length; k++) {
+        const sub = table.get(token.charCodeAt(k));
+        if (sub !== undefined) {
+          out += sub;
+          count++;
+        } else {
+          out += token[k] as string;
+        }
+      }
+    } else {
+      out += token;
+    }
+    i = j;
   }
+
   if (count === 0) return { text: s, count: 0 };
   return { text: out, count };
 }
