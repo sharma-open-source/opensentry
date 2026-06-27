@@ -27,7 +27,15 @@ jobs:
           token: ${{ secrets.NPM_TOKEN }}
 
       - run: pnpm install --frozen-lockfile
-
+      - name: Verify npm identity
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          echo "Authenticated as:"
+          npm whoami
+          node -v
+          npm -v
+          pnpm -v
       - name: Version must match the release tag
         run: |
           PKG_VERSION="$(node -p "require('./package.json').version")"
