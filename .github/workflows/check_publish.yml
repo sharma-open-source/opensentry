@@ -45,5 +45,3 @@ jobs:
               console.log('✅ Publish access confirmed');
             " || \
             echo "Package does not exist yet. Token authentication is valid."
-        env:
-          PACKAGE_NAME: ${{ github.event.repository.name }}
