@@ -31,7 +31,10 @@ export interface EgressResult {
 }
 
 // Matches markdown images ![alt](url) and bare http/https/ftp URLs.
-const URL_RE = /!\[([^\]]*)\]\(\s*([^)\s]+)(?:\s+"[^"]*")?\)|(?:https?|ftp):\/\/[^\s)<>"']+/g;
+// Alt excludes '[' and the image URL excludes '(' so a partial "![..." / "![](..."
+// start that never completes fails in O(1) instead of re-scanning to the end of the
+// input, which would make matching quadratic on adversarial egress text (ReDoS).
+const URL_RE = /!\[([^\]\[]*)\]\(\s*([^)\s(]+)(?:\s+"[^"]*")?\)|(?:https?|ftp):\/\/[^\s)<>"']+/g;
 
 function urlAllowed(url: string, allowlist: (string | RegExp)[]): boolean {
   return allowlist.some((entry) => {
