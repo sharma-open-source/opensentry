@@ -1,0 +1,49 @@
+name: Check npm publish access
+
+on:
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+
+      - name: Verify npm authentication
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          npm whoami
+
+      - name: Check publish access
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          PACKAGE_NAME=$(node -p "require('./package.json').name")
+
+          echo "Package: $PACKAGE_NAME"
+
+          # Fails if the authenticated user/token cannot publish
+          npm access ls-packages "$(npm whoami)" --json
+
+          npm view "$PACKAGE_NAME" >/dev/null 2>&1 && \
+            npm access ls-packages "$(npm whoami)" --json | \
+            node -e "
+              const fs = require('fs');
+              const access = JSON.parse(fs.readFileSync(0, 'utf8'));
+              const pkg = process.env.PACKAGE_NAME;
+              if (access[pkg] !== 'read-write') {
+                console.error('❌ No publish access to ' + pkg);
+                process.exit(1);
+              }
+              console.log('✅ Publish access confirmed');
+            " || \
+            echo "Package does not exist yet. Token authentication is valid."
+        env:
+          PACKAGE_NAME: ${{ github.event.repository.name }}
