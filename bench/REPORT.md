@@ -63,14 +63,34 @@ most public detectors train on it.
 
 | View | n | Precision | Recall | F1 | FPR | ROC-AUC | PR-AUC | Recall@1%FPR | p50 latency | p99 latency |
 |---|---|---|---|---|---|---|---|---|---|---|
-| tier0 | 2399 | 1.000 | 0.304 | 0.467 | 0.000 | 0.655 | 0.899 | 0.309 | 0.029ms | 0.465ms |
-| tier1 (real model, raw) | 2399 | 0.992 | 0.803 | 0.888 | 0.016 | 0.986 | 0.994 | 0.778 | 6.6ms | 97.6ms |
-| tier1Quantized (int8) | 2399 | 0.995 | 0.750 | 0.855 | 0.009 | 0.986 | 0.994 | — | 6.6ms | 107.6ms |
-| tier1_86m | 2399 | 0.987 | 0.806 | 0.888 | 0.026 | 0.988 | 0.995 | — | 14.5ms | 221.7ms |
-| tier1Protectai (open-model candidate) | 2399 | 0.998 | 0.630 | 0.773 | 0.003 | 0.916 | 0.967 | — | 14.3ms | 249.1ms |
-| **blended (current default)** | 2399 | 0.992 | 0.804 | 0.888 | 0.016 | 0.986 | 0.994 | 0.779 | 7.9ms | 127.5ms |
-| blendedOptOut (old default) | 2399 | 1.000 | 0.304 | 0.467 | 0.000 | 0.655 | 0.899 | 0.309 | 0.035ms | 8.3ms |
-| **blendedCalibrated (default + minConfidence:0.87)** | 2399 | 0.997 | 0.719 | 0.836 | 0.006 | 0.859 | 0.958 | 0.719 | 6.6ms | 118.1ms |
+| tier0 † | 2399 | 1.000 | 0.382 | 0.553 | 0.000 | 0.693 | 0.910 | 0.386 | 0.04ms | 0.74ms |
+| tier1 (real model, raw) | 2399 | 0.992 | 0.803 | 0.888 | 0.016 | 0.986 | 0.994 | 0.778 | 6.7ms | 96.7ms |
+| tier1Quantized (int8) | 2399 | 0.995 | 0.750 | 0.855 | 0.009 | 0.986 | 0.994 | — | 6.7ms | 107.9ms |
+| tier1_86m | 2399 | 0.987 | 0.806 | 0.888 | 0.026 | 0.988 | 0.995 | — | 14.6ms | 218.5ms |
+| tier1Protectai (open-model candidate) | 2399 | 0.998 | 0.630 | 0.773 | 0.003 | 0.916 | 0.967 | — | 14.2ms | 240.0ms |
+| **blended (current default)** | 2399 | 0.992 | 0.803 | 0.888 | 0.016 | 0.986 | 0.994 | 0.779 | 8.1ms | 119.1ms |
+| blendedOptOut (old default) † | 2399 | 1.000 | 0.382 | 0.553 | 0.000 | 0.693 | 0.910 | 0.386 | 0.05ms | 10.4ms |
+| **blendedCalibrated (default + minConfidence:0.87)** | 2399 | 0.997 | 0.719 | 0.836 | 0.006 | 0.859 | 0.958 | 0.719 | 6.8ms | 117.0ms |
+
+**† tier0 heuristic update (2026-06-29) — confirmed by a full `pnpm bench` rerun.** The
+`tier0` row reflects added/widened Tier-0 structural patterns: a two-factor persona/mode-switch
+jailbreak signal (`persona_jailbreak`), a widened `instruction_override` verb/noun set
+(don't-follow / stop-following / reverse; directions / commands / orders), and a verb-gated
+guarded-secret extraction signal (`secret_extraction`, targeting password-guard attacks). Net
+effect on this corpus: **recall 0.304 → 0.382** (+129 detections, almost entirely on
+Lakera/gandalf paraphrases that the original narrow noun/verb lists missed) at **unchanged
+1.000 precision / 0.000 FPR** and **0.000 NotInject over-defense (0/339)**. The generic nouns
+text/context/requests and a bare `password` match were deliberately excluded — they added ≤4
+catches for real false-positive surface. The residual misses are dominated by markerless
+harmful-intent requests (AdvBench/JBB-harmful, ~620) which carry no structural signal and are
+Tier-1's job — so ~0.38 is close to the practical Tier-0 ceiling.
+
+The whole table is from one fresh full run (227s, four ONNX sessions). The ML-dependent rows
+(tier1*, blended*, blendedCalibrated) are unchanged within run-noise from the prior run, as
+expected — the heuristic change only affects sync Tier-0 scoring. As predicted,
+**`blendedOptOut`** (the tier0-only sync path, `user.alwaysEscalate:false`) moved in lockstep
+with `tier0` (0.304 → 0.382). Tier-0 p99 rose 0.465 → 0.74ms from the added regex specs, still
+within the <1ms Tier-0 gate.
 
 Latencies above are all from a single run with **three ONNX sessions loaded concurrently in
 the same process** (22M fp32 + 22M int8 + 86M fp32) — they're measurably higher than the
