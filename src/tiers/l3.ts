@@ -86,6 +86,43 @@ const SPECS: Spec[] = [
     cap: 0.6,
     re: /\b(new instructions|new rules|new directives|override prompt|system override)\s*:/g,
   },
+  // ---- Persona / mode-switch jailbreak: named jailbreak mode (MED — escalates, never blocks) ----
+  // Two-factor by construction: a directive framing verb (the precision filter — requires the
+  // text be ADDRESSED to the model, excluding descriptive/interrogative mentions like
+  // "explain what DAN is") AND an unambiguous multiword jailbreak-mode payload (the signal).
+  // The persona STEM alone ("you are a…", "act as…") is deliberately NOT a trigger — it is
+  // identical in benign role-play ("act as a Linux terminal") so matching it would wreck the
+  // NotInject FPR gate. Only multiword names with essentially no benign meaning are listed
+  // (no bare "dan" — a person's name; no "developer/god/sudo mode" — Chrome/Android/gaming).
+  {
+    name: 'persona_jailbreak_named',
+    code: 'persona_jailbreak',
+    category: 'semantic',
+    weight: 0.55,
+    label: 'named jailbreak persona/mode with directive framing',
+    perMatchBoost: 0.06,
+    cap: 0.85,
+    // "unfiltered/unlocked/no-filter mode" intentionally NOT listed: on the real NotInject
+    // corpus they collide with benign business phrasing ("activate the unfiltered mode to
+    // review exit strategies") and add zero real-corpus attack recall (see bench). Kept to the
+    // tokens with essentially no benign meaning.
+    re: /\b(you are|you'?re|you will|from now on|act as|acting as|pretend|roleplay as|behave like|enable|activate|switch to|enter|i want you to (?:act|be|pretend))\b[^.!?]{0,40}?\b(do anything now|dan mode|jailbreak mode|unrestricted mode)\b/g,
+  },
+  // ---- Persona / mode-switch jailbreak: directive + constraint-negation (MED-LOW — escalates) ----
+  // Broader recall net: same directive framing AND a constraint-removal payload directed at the
+  // model. "you are X with no restrictions / not bound by your guidelines / free from all rules".
+  // Interrogative/descriptive mentions ("an essay about AI content restrictions") lack the
+  // directive framing and do not match.
+  {
+    name: 'persona_jailbreak_unbound',
+    code: 'persona_jailbreak',
+    category: 'semantic',
+    weight: 0.45,
+    label: 'persona with constraint-removal directive',
+    perMatchBoost: 0.06,
+    cap: 0.8,
+    re: /\b(you are|you'?re|you will|from now on|act as|acting as|pretend|imagine you(?:'?re| are)?|roleplay as|i want you to (?:act|be|pretend))\b[^.!?]{0,50}?\b(no (?:content |safety |ethical |moral )?(?:restrictions?|rules?|filters?|limits?|guidelines?|boundaries|morals?|ethics|censorship)|without (?:any )?(?:content |safety |ethical |moral )?(?:restrictions?|rules?|filters?|limits?|guidelines?|censorship)|not (?:bound|restricted|limited|constrained) by|free (?:from|of) (?:all )?(?:rules?|restrictions?|filters?|guidelines?)|ignore (?:your|all) (?:guidelines?|rules?|programming|policies)|no longer (?:bound|restricted|constrained)|bypass your (?:guidelines?|programming|filters?|restrictions?))\b/g,
+  },
   // ---- Policy puppetry / structured-config injection (HIGH) ----
   {
     name: 'policy_puppetry',
