@@ -64,7 +64,15 @@ const SPECS: Spec[] = [
     label: 'instruction-override phrasing',
     perMatchBoost: 0.08,
     cap: 0.9,
-    re: /\b(ignore|disregard|forget|override|overrule|skip)\b[^.!?]{0,40}?\b(previous|prior|all|the|your|above|initial|original)\b[^.!?]{0,30}?\b(instructions?|rules?|prompts?|directives?|guidelines?|restrictions?|system prompt)\b/g,
+    // Verb + (previous/the/any…) + control-noun. The verb and noun lists are widened beyond the
+    // obvious "ignore … instructions" to the paraphrases that dominate real captured attacks
+    // (Lakera/gandalf): "don't follow the above directions", "ignore the previous commands",
+    // "reverse the prior orders". The noun list deliberately STOPS SHORT of the generic words
+    // "text"/"context"/"requests": those occur in benign self-corrections ("ignore the typo in
+    // my previous text", "forget the previous requests") and adding them buys only ~4 extra real
+    // catches for a real FP surface. Control-meaning nouns (directions/commands/orders) are kept.
+    // Measured zero benign / zero NotInject FP on the real corpus. See bench/REPORT.md.
+    re: /\b(ignore|disregard|forget|override|overrule|skip|don'?t follow|do not follow|stop following|reverse)\b[^.!?]{0,40}?\b(previous|prior|all|the|your|above|initial|original|any)\b[^.!?]{0,30}?\b(instructions?|rules?|prompts?|directives?|guidelines?|restrictions?|directions?|commands?|orders?|system prompt)\b/g,
   },
   {
     name: 'instruction_override_2',
@@ -85,6 +93,43 @@ const SPECS: Spec[] = [
     perMatchBoost: 0.06,
     cap: 0.6,
     re: /\b(new instructions|new rules|new directives|override prompt|system override)\s*:/g,
+  },
+  // ---- Persona / mode-switch jailbreak: named jailbreak mode (MED — escalates, never blocks) ----
+  // Two-factor by construction: a directive framing verb (the precision filter — requires the
+  // text be ADDRESSED to the model, excluding descriptive/interrogative mentions like
+  // "explain what DAN is") AND an unambiguous multiword jailbreak-mode payload (the signal).
+  // The persona STEM alone ("you are a…", "act as…") is deliberately NOT a trigger — it is
+  // identical in benign role-play ("act as a Linux terminal") so matching it would wreck the
+  // NotInject FPR gate. Only multiword names with essentially no benign meaning are listed
+  // (no bare "dan" — a person's name; no "developer/god/sudo mode" — Chrome/Android/gaming).
+  {
+    name: 'persona_jailbreak_named',
+    code: 'persona_jailbreak',
+    category: 'semantic',
+    weight: 0.55,
+    label: 'named jailbreak persona/mode with directive framing',
+    perMatchBoost: 0.06,
+    cap: 0.85,
+    // "unfiltered/unlocked/no-filter mode" intentionally NOT listed: on the real NotInject
+    // corpus they collide with benign business phrasing ("activate the unfiltered mode to
+    // review exit strategies") and add zero real-corpus attack recall (see bench). Kept to the
+    // tokens with essentially no benign meaning.
+    re: /\b(you are|you'?re|you will|from now on|act as|acting as|pretend|roleplay as|behave like|enable|activate|switch to|enter|i want you to (?:act|be|pretend))\b[^.!?]{0,40}?\b(do anything now|dan mode|jailbreak mode|unrestricted mode)\b/g,
+  },
+  // ---- Persona / mode-switch jailbreak: directive + constraint-negation (MED-LOW — escalates) ----
+  // Broader recall net: same directive framing AND a constraint-removal payload directed at the
+  // model. "you are X with no restrictions / not bound by your guidelines / free from all rules".
+  // Interrogative/descriptive mentions ("an essay about AI content restrictions") lack the
+  // directive framing and do not match.
+  {
+    name: 'persona_jailbreak_unbound',
+    code: 'persona_jailbreak',
+    category: 'semantic',
+    weight: 0.45,
+    label: 'persona with constraint-removal directive',
+    perMatchBoost: 0.06,
+    cap: 0.8,
+    re: /\b(you are|you'?re|you will|from now on|act as|acting as|pretend|imagine you(?:'?re| are)?|roleplay as|i want you to (?:act|be|pretend))\b[^.!?]{0,50}?\b(no (?:content |safety |ethical |moral )?(?:restrictions?|rules?|filters?|limits?|guidelines?|boundaries|morals?|ethics|censorship)|without (?:any )?(?:content |safety |ethical |moral )?(?:restrictions?|rules?|filters?|limits?|guidelines?|censorship)|not (?:bound|restricted|limited|constrained) by|free (?:from|of) (?:all )?(?:rules?|restrictions?|filters?|guidelines?)|ignore (?:your|all) (?:guidelines?|rules?|programming|policies)|no longer (?:bound|restricted|constrained)|bypass your (?:guidelines?|programming|filters?|restrictions?))\b/g,
   },
   // ---- Policy puppetry / structured-config injection (HIGH) ----
   {
@@ -162,6 +207,23 @@ const SPECS: Spec[] = [
     perMatchBoost: 0.06,
     cap: 0.85,
     re: /((repeat|reveal|show me|print|output|leak|disclose|expose|tell me)\b[^.!?]{0,20}?\b(your|the|its)\b[^.!?]{0,20}?\b(system )?(prompt|instructions|initial message|rules|directives|secret|hidden message)\b)/g,
+  },
+  // ---- Guarded-secret / password extraction (MED — verb-gated) ----
+  // Captured attacks against password-guard challenges (Lakera/gandalf) overwhelmingly target a
+  // guarded secret directly: "what's the password", "print the first password letter", "spell
+  // the passphrase". A BARE mention of "password" is far too common in benign prose (resets,
+  // docs) and causes FP, so this is gated on an extraction VERB within a short window of the
+  // secret noun. Measured zero benign / zero NotInject FP on the real corpus; the bare-noun
+  // variant caused 6 FP and was rejected. See bench/REPORT.md.
+  {
+    name: 'secret_extraction',
+    code: 'indirect_marker',
+    category: 'semantic',
+    weight: 0.5,
+    label: 'guarded-secret / password extraction marker',
+    perMatchBoost: 0.06,
+    cap: 0.8,
+    re: /\b(what'?s|what is|whats|tell me|give me|reveal|print|spell|repeat|list|show me|the first)\b[^.!?]{0,30}?\bpass(word|phrase|code)\b/g,
   },
   // ---- Indirect reference (LOW alone — benign prompt-engineering articles mention "the system prompt") ----
   {

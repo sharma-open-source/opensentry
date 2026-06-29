@@ -21,6 +21,7 @@ export type ReasonCode =
   | 'template_forgery'
   | 'special_token_injection'
   | 'instruction_override'
+  | 'persona_jailbreak'
   | 'policy_puppetry'
   | 'exfil_markdown_image'
   | 'exfil_url_lure'
